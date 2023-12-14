@@ -3,30 +3,47 @@ import * as Command from "@effect/cli/Command"
 import * as NodeContext from "@effect/platform-node/NodeContext"
 import * as Runtime from "@effect/platform-node/Runtime"
 import * as FS from "@effect/platform/FileSystem"
+import * as S from "@effect/schema/Schema"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
 import pkg from "../package.json"
+
+const Collector = S.union(S.literal("myaku/loc"))
+const Frequency = S.union(S.literal("per-commit"))
+
+const Config = S.struct({
+  repository: S.string,
+  metrics: S.record(
+    S.string,
+    S.struct({
+      collector: Collector,
+      frequency: Frequency,
+    })
+  ),
+})
+
+const loadConfig = (configPath: string) =>
+  Effect.gen(function* ($) {
+    const fs = yield* $(FS.FileSystem)
+    const absoluteConfigPath = yield* $(fs.realPath(configPath))
+    const configContent = yield* $(fs.readFileString(absoluteConfigPath))
+
+    const parse = S.parseSync(S.fromJson(Config))
+    const config = parse(configContent)
+
+    return config
+  })
 
 const myakuCollect = Command.make(
   "collect",
   {
     config: Args.path({ name: "config" }),
   },
-  ({ config }) =>
+  ({ config: configPath }) =>
     Effect.gen(function* ($) {
-      const fs = yield* $(FS.FileSystem)
-      const doesConfigExist = yield* $(fs.exists(config))
-
-      if (!doesConfigExist) {
-        yield* $(Console.error("Config file does not exist"))
-        return
-      }
-
-      const absoluteConfigPath = yield* $(fs.realPath(config))
-
-      yield* $(
-        Console.debug("Continuing with config file: " + absoluteConfigPath)
-      )
+      const config = yield* $(loadConfig(configPath))
+      yield* $(Console.log("Loaded config:"))
+      yield* $(Console.log(config))
     })
 )
 

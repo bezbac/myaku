@@ -1,0 +1,9 @@
+{
+  "repository": "git@github.com:RockstarLang/rockstar.git",
+  "metrics": {
+    "loc": {
+      "collector": "myaku/loc",
+      "frequency": "per-commit"
+    }
+  }
+}
