@@ -18,17 +18,20 @@ importers:
   packages/cli:
     dependencies:
       '@effect/cli':
-        specifier: ^0.19.0
-        version: 0.19.0(@effect/printer-ansi@0.21.1)(@effect/printer@0.21.1)(@effect/schema@0.46.4)(effect@2.0.0-next.52)
+        specifier: ^0.25.4
+        version: 0.25.4(@effect/platform@0.35.0)(@effect/printer-ansi@0.28.0)(@effect/printer@0.27.0)(@effect/schema@0.53.3)(effect@2.0.0-next.60)
+      '@effect/platform':
+        specifier: ^0.35.0
+        version: 0.35.0(@effect/schema@0.53.3)(effect@2.0.0-next.60)
       '@effect/platform-node':
-        specifier: ^0.27.4
-        version: 0.27.9(@effect/schema@0.46.4)(effect@2.0.0-next.52)
+        specifier: ^0.35.1
+        version: 0.35.1(@effect/schema@0.53.3)(effect@2.0.0-next.60)
       '@effect/schema':
-        specifier: ^0.46.2
-        version: 0.46.4(effect@2.0.0-next.52)(fast-check@3.13.2)
+        specifier: ^0.53.1
+        version: 0.53.3(effect@2.0.0-next.60)(fast-check@3.14.0)
       effect:
-        specifier: 2.0.0-next.52
-        version: 2.0.0-next.52
+        specifier: 2.0.0-next.60
+        version: 2.0.0-next.60
     devDependencies:
       '@types/node':
         specifier: ^20
@@ -167,83 +170,85 @@ packages:
       to-fast-properties: 2.0.0
     dev: true
 
-  /@effect/cli@0.19.0(@effect/printer-ansi@0.21.1)(@effect/printer@0.21.1)(@effect/schema@0.46.4)(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-DPbUjRCrUWm0pOzColiwnJe2t2UK0RbNsr0ntk3w8finPZ0BszwNGkgtpI0dEUH/YdcN0D5TWW7GeoQWsrQJeg==}
+  /@effect/cli@0.25.4(@effect/platform@0.35.0)(@effect/printer-ansi@0.28.0)(@effect/printer@0.27.0)(@effect/schema@0.53.3)(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-kwGP7JqAKkJktIStPScjdyI/kDTgdxd5z0Kt3sI7nu6+iQQFUOojJ7iJH3nHeFAk9P6QPLUEwHXk5AG+CGW32w==}
     peerDependencies:
-      '@effect/printer': ^0.21.1
-      '@effect/printer-ansi': ^0.21.1
-      '@effect/schema': ^0.46.1
-      effect: 2.0.0-next.52
+      '@effect/platform': ^0.35.0
+      '@effect/printer': ^0.27.0
+      '@effect/printer-ansi': ^0.28.0
+      '@effect/schema': ^0.53.0
+      effect: 2.0.0-next.60
     dependencies:
-      '@effect/printer': 0.21.1(@effect/typeclass@0.13.1)(effect@2.0.0-next.52)
-      '@effect/printer-ansi': 0.21.1(@effect/typeclass@0.13.1)(effect@2.0.0-next.52)
-      '@effect/schema': 0.46.4(effect@2.0.0-next.52)(fast-check@3.13.2)
-      effect: 2.0.0-next.52
+      '@effect/platform': 0.35.0(@effect/schema@0.53.3)(effect@2.0.0-next.60)
+      '@effect/printer': 0.27.0(@effect/typeclass@0.19.1)(effect@2.0.0-next.60)
+      '@effect/printer-ansi': 0.28.0(@effect/typeclass@0.19.1)(effect@2.0.0-next.60)
+      '@effect/schema': 0.53.3(effect@2.0.0-next.60)(fast-check@3.14.0)
+      effect: 2.0.0-next.60
     dev: false
 
-  /@effect/platform-node@0.27.9(@effect/schema@0.46.4)(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-sHmGtWNO3zcto0p6Rs9HblYTPTgbD9EFdBvP5c2rc/qIlUVwo9AkNd58xTZBAHe0ywbznuOmHNtiR/1nUZaduw==}
-    engines: {node: '>=18.0.0'}
+  /@effect/platform-node@0.35.1(@effect/schema@0.53.3)(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-3aymNBJvjPmc2joXB/Hg02S+6Rd3R2QUgJhpSimKsYUxVI6RYNxgO1iajuzI2bezt83QC1PTgQjKVFpsB6GZzw==}
     peerDependencies:
-      effect: 2.0.0-next.52
+      effect: 2.0.0-next.60
     dependencies:
-      '@effect/platform': 0.26.7(@effect/schema@0.46.4)(effect@2.0.0-next.52)
-      busboy: 1.6.0
-      effect: 2.0.0-next.52
+      '@effect/platform': 0.35.0(@effect/schema@0.53.3)(effect@2.0.0-next.60)
+      effect: 2.0.0-next.60
       mime: 3.0.0
+      multipasta: 0.1.21
     transitivePeerDependencies:
       - '@effect/schema'
     dev: false
 
-  /@effect/platform@0.26.7(@effect/schema@0.46.4)(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-TwQudJbuDqUo/B8BsDpyNDTBnCuiIHOm1+ysGrcWaG8YGYYQhBUmiArRqna1xCUQ0Uf28NfAOoPuezWEVbwA+w==}
+  /@effect/platform@0.35.0(@effect/schema@0.53.3)(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-fGKsbefFqf0ry3YrvJuDp+esMXrskh8iqPA8WjWpvwM6TK3JKbIdMC7pIN2VRd1TTeXCNGUiJebInnAEF4l/Dg==}
     peerDependencies:
-      '@effect/schema': ^0.46.1
-      effect: 2.0.0-next.52
+      '@effect/schema': ^0.53.1
+      effect: 2.0.0-next.60
     dependencies:
-      '@effect/schema': 0.46.4(effect@2.0.0-next.52)(fast-check@3.13.2)
-      effect: 2.0.0-next.52
+      '@effect/schema': 0.53.3(effect@2.0.0-next.60)(fast-check@3.14.0)
+      effect: 2.0.0-next.60
       find-my-way: 7.7.0
+      multipasta: 0.1.21
       path-browserify: 1.0.1
     dev: false
 
-  /@effect/printer-ansi@0.21.1(@effect/typeclass@0.13.1)(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-bEUpGNTn0UZh2hmC4wAritx5MSqUDAihzqt5xIoXAPzJY+yb7tRBnlgKTJ+Z+/VhdxNieUzfAzPNabiNSS37WQ==}
+  /@effect/printer-ansi@0.28.0(@effect/typeclass@0.19.1)(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-BqcZRICrRdAa4SjL4/KPdB/q+KAZMV4EfRyzIUn0PJyMOtSscJLkZX3Te9CoLBwMkBpo0CYZAsgdl7JQbys5Lg==}
     peerDependencies:
-      '@effect/typeclass': ^0.13.1
-      effect: 2.0.0-next.52
+      '@effect/typeclass': ^0.19.0
+      effect: 2.0.0-next.60
     dependencies:
-      '@effect/printer': 0.21.1(@effect/typeclass@0.13.1)(effect@2.0.0-next.52)
-      '@effect/typeclass': 0.13.1(effect@2.0.0-next.52)
-      effect: 2.0.0-next.52
+      '@effect/printer': 0.27.0(@effect/typeclass@0.19.1)(effect@2.0.0-next.60)
+      '@effect/typeclass': 0.19.1(effect@2.0.0-next.60)
+      effect: 2.0.0-next.60
     dev: false
 
-  /@effect/printer@0.21.1(@effect/typeclass@0.13.1)(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-TvR0vVNKYtJ2NoLwO/XrQdUpQ5rs8k+oIHxfvS8o+bcFQ4giW4mrsyKTnO/G0cpVhaelBEur+bndKhU058IOIw==}
+  /@effect/printer@0.27.0(@effect/typeclass@0.19.1)(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-jsLYxJ2H14xylf2+mkb9jq6aig4aX8MlfG2yaeQRK1hg2pL3KXFnYVKzIDomG+siTKHkFDNH8cLCjjWFc0WCwQ==}
     peerDependencies:
-      '@effect/typeclass': ^0.13.1
-      effect: 2.0.0-next.52
+      '@effect/typeclass': ^0.19.0
+      effect: 2.0.0-next.60
     dependencies:
-      '@effect/typeclass': 0.13.1(effect@2.0.0-next.52)
-      effect: 2.0.0-next.52
+      '@effect/typeclass': 0.19.1(effect@2.0.0-next.60)
+      effect: 2.0.0-next.60
     dev: false
 
-  /@effect/schema@0.46.4(effect@2.0.0-next.52)(fast-check@3.13.2):
-    resolution: {integrity: sha512-luaLVNgFxhYQs+W8qZHGQXBOTMmTLq02hQkadSSALQn3fUkQQ0dAJpBgqzN+zduQxZbsn8z1PyBHBgQOxotk1g==}
+  /@effect/schema@0.53.3(effect@2.0.0-next.60)(fast-check@3.14.0):
+    resolution: {integrity: sha512-QycmIqn2E7v0IPzHqSXmdnX7fhgr102z90BAjBUsifJy5MOfC9EdxTJ5DY8Vxiq9gjbLz7QWBQuCyqRDJ6eNAQ==}
     peerDependencies:
-      effect: 2.0.0-next.52
+      effect: 2.0.0-next.60
       fast-check: ^3.13.2
     dependencies:
-      effect: 2.0.0-next.52
-      fast-check: 3.13.2
+      effect: 2.0.0-next.60
+      fast-check: 3.14.0
     dev: false
 
-  /@effect/typeclass@0.13.1(effect@2.0.0-next.52):
-    resolution: {integrity: sha512-8dRe8Rn7Fb/UT8h+bVYYiQWvRdV0gfSDQJCd8p5mE0pPltDxioCY0uyJyVWkrU+Q1xT4aSNHQGdB+gBsVNf0hw==}
+  /@effect/typeclass@0.19.1(effect@2.0.0-next.60):
+    resolution: {integrity: sha512-3FZpsDe76MIQqBBM3dyFSihvlkWqvGF4baxPLbsIuHJRLTeJyU7jGsuYP79aB78n96rRrRC4RQuMGmDKUkmanA==}
     peerDependencies:
-      effect: 2.0.0-next.52
+      effect: 2.0.0-next.60
     dependencies:
-      effect: 2.0.0-next.52
+      effect: 2.0.0-next.60
     dev: false
 
   /@esbuild/android-arm64@0.18.20:
@@ -511,13 +516,6 @@ packages:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
     dev: true
 
-  /busboy@1.6.0:
-    resolution: {integrity: sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA==}
-    engines: {node: '>=10.16.0'}
-    dependencies:
-      streamsearch: 1.1.0
-    dev: false
-
   /chalk@2.4.2:
     resolution: {integrity: sha512-Mti+f9lpJNcwF4tWV8/OrTTtF1gZi+f8FqlyAdouralcFWFQWF2+NgCHShjkCb+IFBLq9buZwE1xckQU4peSuQ==}
     engines: {node: '>=4'}
@@ -549,8 +547,8 @@ packages:
       ms: 2.1.2
     dev: true
 
-  /effect@2.0.0-next.52:
-    resolution: {integrity: sha512-6VmmfS6xyOZsJRT0hcEsMx03HxXSeG/VmcniDvVw0nzBudlu+4qUvj8GBGYVFVgJfKcISSRey0tzfO9HXIzApg==}
+  /effect@2.0.0-next.60:
+    resolution: {integrity: sha512-23KhlVACgrg5UPFu9i4szybSU4cCU4T/7CX4pe0jV84QBZX0zm96WzwCtg6dqOnmUzBL7hm6S+iiPW2Rab13Uw==}
     dev: false
 
   /esbuild@0.18.20:
@@ -588,8 +586,8 @@ packages:
     engines: {node: '>=0.8.0'}
     dev: true
 
-  /fast-check@3.13.2:
-    resolution: {integrity: sha512-ouTiFyeMoqmNg253xqy4NSacr5sHxH6pZpLOaHgaAdgZxFWdtsfxExwolpveoAE9CJdV+WYjqErNGef6SqA5Mg==}
+  /fast-check@3.14.0:
+    resolution: {integrity: sha512-9Z0zqASzDNjXBox/ileV/fd+4P+V/f3o4shM6QawvcdLFh8yjPG4h5BrHUZ8yzY6amKGDTAmRMyb/JZqe+dCgw==}
     engines: {node: '>=8.0.0'}
     dependencies:
       pure-rand: 6.0.4
@@ -670,6 +668,10 @@ packages:
     resolution: {integrity: sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==}
     dev: true
 
+  /multipasta@0.1.21:
+    resolution: {integrity: sha512-HpF9156uifsQu1L8KKW1EqXIt3DacHJTzQ+JSm6IShkcyyf+krOWzfOgT3OLHzesM40hbs6/QW5CJWSEdDPQag==}
+    dev: false
+
   /path-browserify@1.0.1:
     resolution: {integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==}
     dev: false
@@ -715,11 +717,6 @@ packages:
     resolution: {integrity: sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==}
     engines: {node: '>=0.10.0'}
     dev: true
-
-  /streamsearch@1.1.0:
-    resolution: {integrity: sha512-Mcc5wHehp9aXz1ax6bZUyY5afg9u2rv5cqQI3mRrYkGC8rW2hM02jWuwjtL++LS5qinSyhj2QfLyNsuc+VsExg==}
-    engines: {node: '>=10.0.0'}
-    dev: false
 
   /supports-color@5.5.0:
     resolution: {integrity: sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow==}

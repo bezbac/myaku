@@ -1,70 +1,46 @@
 import * as Args from "@effect/cli/Args"
-import * as Cli from "@effect/cli/CliApp"
 import * as Command from "@effect/cli/Command"
-import * as HelpDoc from "@effect/cli/HelpDoc"
-import * as Options from "@effect/cli/Options"
-import * as Node from "@effect/platform-node/Runtime"
-import * as Data from "effect/Data"
+import * as NodeContext from "@effect/platform-node/NodeContext"
+import * as Runtime from "@effect/platform-node/Runtime"
+import * as FS from "@effect/platform/FileSystem"
+import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
-import { pipe } from "effect/Function"
-import * as Option from "effect/Option"
 import pkg from "../package.json"
 
-export interface Collect extends Data.Case {
-  readonly _tag: "Collect"
-  readonly directory: string
-}
+const myakuCollect = Command.make(
+  "collect",
+  {
+    config: Args.path({ name: "config" }),
+  },
+  ({ config }) =>
+    Effect.gen(function* ($) {
+      const fs = yield* $(FS.FileSystem)
+      const doesConfigExist = yield* $(fs.exists(config))
 
-export const Collect = Data.tagged<Collect>("Collect")
+      if (!doesConfigExist) {
+        yield* $(Console.error("Config file does not exist"))
+        return
+      }
 
-export interface Myaku extends Data.Case {
-  readonly version: boolean
-  readonly subcommand: Option.Option<Collect>
-}
+      const absoluteConfigPath = yield* $(fs.realPath(config))
 
-export const Myaku = Data.case<Myaku>()
-
-const collect: Command.Command<Collect> = pipe(
-  Command.make("collect", {
-    args: Args.text({ name: "directory" }),
-  }),
-  Command.withHelp(HelpDoc.p("Description of the `mayku collect` subcommand")),
-  Command.map(({ args: directory }) => Collect({ directory }))
+      yield* $(
+        Console.debug("Continuing with config file: " + absoluteConfigPath)
+      )
+    })
 )
 
-const myaku: Command.Command<Myaku> = pipe(
-  Command.make("myaku", {
-    options: Options.boolean("version").pipe(Options.alias("v")),
-  }),
-  Command.subcommands([collect]),
-  Command.map(({ options: version, subcommand }) =>
-    Myaku({ version, subcommand })
-  )
-)
+const myaku = Command.make("myaku", {})
 
-const handleMyakuSubcommand = (
-  command: Collect
-): Effect.Effect<never, never, void> => {
-  switch (command._tag) {
-    case "Collect": {
-      const msg = `Executing 'myaku collect ${command.directory}'`
-      return Effect.log(msg)
-    }
-  }
-}
+const command = myaku.pipe(Command.withSubcommands([myakuCollect]))
 
-const cli = Cli.make({
+const cli = Command.run(command, {
   name: "Myaku CLI",
   version: pkg.version,
-  command: myaku,
 })
 
-const main = Cli.run(cli, process.argv.slice(2), (command) =>
-  Option.match(command.subcommand, {
-    onNone: () =>
-      command.version ? Effect.log(`Executing 'myaku --version'`) : Effect.unit,
-    onSome: handleMyakuSubcommand,
-  })
+Effect.suspend(() => cli(process.argv.slice(2))).pipe(
+  Effect.provide(NodeContext.layer),
+  Effect.tapErrorCause(Effect.logError),
+  Runtime.runMain
 )
-
-Node.runMain(main.pipe(Effect.tapErrorCause(Effect.logError)))
