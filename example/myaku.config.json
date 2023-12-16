@@ -1,5 +1,8 @@
 {
-  "repository": "git@github.com:RockstarLang/rockstar.git",
+  "reference": {
+    "url": "git@github.com:RockstarLang/rockstar.git",
+    "branch": "main"
+  },
   "metrics": {
     "loc": {
       "collector": "myaku/loc",
