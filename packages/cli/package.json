@@ -2,14 +2,18 @@
   "name": "@myaku/cli",
   "version": "0.0.1",
   "author": "Ben Bachem",
+  "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "build": "tsc"
+    "start": "vite-node src/index.ts",
+    "build": "vite build",
+    "test": "vitest"
   },
   "devDependencies": {
     "@types/node": "^20",
-    "tsx": "^4.1.3",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "vite": "^5.0.10",
+    "vite-node": "^1.0.4",
+    "vitest": "^1.0.4"
   },
   "dependencies": {
     "@effect/cli": "^0.25.4",

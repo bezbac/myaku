@@ -50,6 +50,19 @@ const getRepositoryNameFromUrl = (repositoryUrl: string): string =>
     (x) => x.slice(0, -4)
   )
 
+if (import.meta.vitest) {
+  const { expect, test, describe } = import.meta.vitest
+
+  describe("getRepositoryNameFromUrl", () => {
+    test.each([
+      ["https://github.com/user/repo.git", "repo"],
+      ["git@github.com:user/repo.git", "repo"],
+    ] as const)("getRepositoryNameFromUrl(%s) -> %s", (url, expected) => {
+      expect(getRepositoryNameFromUrl(url)).toBe(expected)
+    })
+  })
+}
+
 const clone = (git: SimpleGit, repoPath: string, localPath: string = ".") =>
   Effect.gen(function* ($) {
     yield* $(Effect.tryPromise(() => git.clone(repoPath, localPath)))
@@ -127,8 +140,10 @@ const cli = Command.run(command, {
   version: pkg.version,
 })
 
-Effect.suspend(() => cli(process.argv.slice(2))).pipe(
-  Effect.provide(NodeContext.layer),
-  Effect.tapErrorCause(Effect.logError),
-  Runtime.runMain
-)
+if (!import.meta.vitest) {
+  Effect.suspend(() => cli(process.argv.slice(2))).pipe(
+    Effect.provide(NodeContext.layer),
+    Effect.tapErrorCause(Effect.logError),
+    Runtime.runMain
+  )
+}
