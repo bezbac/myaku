@@ -9,7 +9,7 @@ import { pipe } from "effect"
 import { UnknownException } from "effect/Cause"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
-import simpleGit, { SimpleGit } from "simple-git"
+import simpleGit, { SimpleGit, LogResult, DefaultLogFields } from "simple-git"
 import pkg from "../package.json"
 
 const Collector = S.union(S.literal("myaku/loc"))
@@ -64,58 +64,32 @@ if (import.meta.vitest) {
 }
 
 const clone = (git: SimpleGit, repoPath: string, localPath: string = ".") =>
-  Effect.gen(function* ($) {
-    yield* $(Effect.tryPromise(() => git.clone(repoPath, localPath)))
-  }) as Effect.Effect<NodeContext.NodeContext, UnknownException, void>
+  Effect.tryPromise(() => git.clone(repoPath, localPath)) as Effect.Effect<
+    NodeContext.NodeContext,
+    UnknownException,
+    void
+  >
 
 const checkout = (git: SimpleGit, branch: string) =>
-  Effect.gen(function* ($) {
-    yield* $(Effect.tryPromise(() => git.checkout(branch)))
-  }) as Effect.Effect<NodeContext.NodeContext, UnknownException, void>
+  Effect.tryPromise(() => git.checkout(branch)) as Effect.Effect<
+    NodeContext.NodeContext,
+    UnknownException,
+    void
+  >
 
 const pull = (git: SimpleGit) =>
-  Effect.gen(function* ($) {
-    yield* $(Effect.tryPromise(() => git.pull()))
-  }) as Effect.Effect<NodeContext.NodeContext, UnknownException, void>
+  Effect.tryPromise(() => git.pull()) as Effect.Effect<
+    NodeContext.NodeContext,
+    UnknownException,
+    void
+  >
 
-const prepareGitRepo = ({
-  url: repositoryUrl,
-  branch,
-}: S.Schema.To<typeof Config>["reference"]) =>
-  Effect.gen(function* ($) {
-    const fs = yield* $(FS.FileSystem)
-    const path = yield* $(Path.Path)
-
-    const repositoryName = getRepositoryNameFromUrl(repositoryUrl)
-    const repositoryTempdirName = repositoryUrl.replace(/[^a-zA-Z0-9]/g, "_")
-
-    const tmpdir = yield* $(fs.makeTempDirectory())
-    const repoDir = path.join(tmpdir, "myaku", repositoryTempdirName)
-
-    yield* $(fs.makeDirectory(repoDir, { recursive: true }))
-
-    const gitDirectoryExists = yield* $(fs.exists(path.join(repoDir, ".git")))
-
-    const git: SimpleGit = simpleGit({
-      baseDir: repoDir,
-      binary: "git",
-      maxConcurrentProcesses: 6,
-      trimmed: false,
-    })
-
-    if (gitDirectoryExists) {
-      yield* $(Console.log("Git repository already exists, skipping clone..."))
-      yield* $(checkout(git, branch))
-      yield* $(pull(git))
-    } else {
-      yield* $(
-        Console.log(`Cloning repository ${repositoryName} into ${repoDir}`)
-      )
-      yield* $(clone(git, repositoryUrl))
-      yield* $(Console.log(`Successfully cloned repository`))
-      yield* $(checkout(git, branch))
-    }
-  })
+const log = (git: SimpleGit) =>
+  Effect.tryPromise(() => git.log()) as Effect.Effect<
+    NodeContext.NodeContext,
+    UnknownException,
+    LogResult<DefaultLogFields>
+  >
 
 const myakuCollect = Command.make(
   "collect",
@@ -127,7 +101,60 @@ const myakuCollect = Command.make(
       const config = yield* $(loadConfig(configPath))
       yield* $(Console.log("Loaded config:"))
       yield* $(Console.log(config))
-      yield* $(prepareGitRepo(config.reference))
+
+      const fs = yield* $(FS.FileSystem)
+      const path = yield* $(Path.Path)
+
+      const repositoryName = getRepositoryNameFromUrl(config.reference.url)
+      const repositoryTempdirName = config.reference.url.replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      )
+
+      const tmpdir = yield* $(fs.makeTempDirectory())
+      const repoDir = path.join(tmpdir, "myaku", repositoryTempdirName)
+
+      yield* $(fs.makeDirectory(repoDir, { recursive: true }))
+
+      const gitDirectoryExists = yield* $(fs.exists(path.join(repoDir, ".git")))
+
+      const git: SimpleGit = simpleGit({
+        baseDir: repoDir,
+        binary: "git",
+        maxConcurrentProcesses: 6,
+        trimmed: false,
+      })
+
+      if (gitDirectoryExists) {
+        yield* $(
+          Console.log("Git repository already exists, skipping clone...")
+        )
+        yield* $(checkout(git, config.reference.branch))
+        yield* $(pull(git))
+      } else {
+        yield* $(
+          Console.log(`Cloning repository ${repositoryName} into ${repoDir}`)
+        )
+        yield* $(clone(git, config.reference.url))
+        yield* $(Console.log(`Successfully cloned repository`))
+        yield* $(checkout(git, config.reference.branch))
+      }
+
+      yield* $(Console.log("Collecting commit information"))
+
+      const commits = (yield* $(log(git))).all.map((commit) => ({
+        hash: commit.hash,
+        date: commit.date,
+        message: commit.message,
+      }))
+
+      const outputDir = path.resolve(".myaku")
+
+      yield* $(fs.makeDirectory(outputDir, { recursive: true }))
+
+      const commitsFile = path.join(outputDir, "commits.json")
+
+      yield* $(fs.writeFileString(commitsFile, JSON.stringify(commits)))
     })
 )
 
