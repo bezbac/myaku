@@ -4,7 +4,9 @@ import * as NodeContext from "@effect/platform-node/NodeContext"
 import * as Runtime from "@effect/platform-node/Runtime"
 import * as FS from "@effect/platform/FileSystem"
 import * as Path from "@effect/platform/Path"
+import { ParseError } from "@effect/schema/ParseResult"
 import * as S from "@effect/schema/Schema"
+import tokeiLib from "@faga/tokei"
 import { pipe } from "effect"
 import { UnknownException } from "effect/Cause"
 import * as Console from "effect/Console"
@@ -70,8 +72,8 @@ const clone = (git: SimpleGit, repoPath: string, localPath: string = ".") =>
     void
   >
 
-const checkout = (git: SimpleGit, branch: string) =>
-  Effect.tryPromise(() => git.checkout(branch)) as Effect.Effect<
+const checkout = (git: SimpleGit, what: string) =>
+  Effect.tryPromise(() => git.checkout(what)) as Effect.Effect<
     NodeContext.NodeContext,
     UnknownException,
     void
@@ -89,6 +91,30 @@ const log = (git: SimpleGit) =>
     NodeContext.NodeContext,
     UnknownException,
     LogResult<DefaultLogFields>
+  >
+
+const TokeiLanguageInfoWithoutLang = S.struct({
+  code: S.number,
+  comments: S.number,
+  blanks: S.number,
+  lines: S.number,
+})
+
+const TokeiOutput = S.struct({
+  Total: TokeiLanguageInfoWithoutLang,
+}).pipe(S.extend(S.record(S.union(S.string), TokeiLanguageInfoWithoutLang)))
+
+const parseTokeiOutput = S.parse(TokeiOutput)
+
+const tokei = (options: Parameters<typeof tokeiLib>[0]) =>
+  Effect.gen(function* ($) {
+    const tokeiOutput = yield* $(Effect.try(() => tokeiLib(options)))
+    const parsed = yield* $(parseTokeiOutput(tokeiOutput))
+    return parsed
+  }) as Effect.Effect<
+    NodeContext.NodeContext,
+    UnknownException | ParseError,
+    S.Schema.To<typeof TokeiOutput>
   >
 
 const myakuCollect = Command.make(
@@ -155,6 +181,50 @@ const myakuCollect = Command.make(
       const commitsFile = path.join(outputDir, "commits.json")
 
       yield* $(fs.writeFileString(commitsFile, JSON.stringify(commits)))
+
+      yield* $(Console.log("Collecting metrics"))
+
+      const metricsOutputDir = path.join(outputDir, "metrics")
+
+      for (const commit of commits) {
+        yield* $(checkout(git, commit.hash))
+
+        for (const [metricName, metricConfig] of Object.entries(
+          config.metrics
+        )) {
+          const specificMetricOutputDir = path.join(
+            metricsOutputDir,
+            metricName
+          )
+
+          yield* $(
+            fs.makeDirectory(specificMetricOutputDir, { recursive: true })
+          )
+
+          const metricsFilePath = path.join(
+            specificMetricOutputDir,
+            `${commit.hash}.json`
+          )
+
+          if (metricConfig.collector === "myaku/loc") {
+            const res = yield* $(
+              tokei({
+                include: [repoDir],
+                exclude: [],
+              })
+            )
+
+            yield* $(
+              fs.writeFileString(
+                metricsFilePath,
+                JSON.stringify(res.Total.code)
+              )
+            )
+          }
+        }
+      }
+
+      yield* $(Console.log("Finished collecting metrics"))
     })
 )
 

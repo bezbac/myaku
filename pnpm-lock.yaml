@@ -29,6 +29,9 @@ importers:
       '@effect/schema':
         specifier: ^0.53.1
         version: 0.53.3(effect@2.0.0-next.60)(fast-check@3.14.0)
+      '@faga/tokei':
+        specifier: ^0.0.14
+        version: 0.0.14
       effect:
         specifier: 2.0.0-next.60
         version: 2.0.0-next.60
@@ -457,6 +460,48 @@ packages:
     requiresBuild: true
     dev: true
     optional: true
+
+  /@faga/tokei-core-darwin-arm64@0.0.9:
+    resolution: {integrity: sha512-NIea4+1z71Uzvhsfj9ppvUex5nbyunz97fFbXBbsJnEmJSJMohwH9HRh4/USMlrRDvVn/23zc/jxKlXX5ukSLw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@faga/tokei-core-darwin-x64@0.0.9:
+    resolution: {integrity: sha512-JiCqz9NLpmUunHFPNjxRU6oijuyhbO067ySsJoWk1+09skreLuvkF3YB03yx2hhnNPBKupmGyQB2eaIf0oYivA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@faga/tokei-core-win32-x64-msvc@0.0.9:
+    resolution: {integrity: sha512-Ns7KMq6p1i46sHA711jeQLomQCISfnwV6exyW0IdqwtOaGfahfsBBb9+aMQN1gA0HPR7AQhhSY54Rc4WK/dqxQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@faga/tokei-core@0.0.9:
+    resolution: {integrity: sha512-0j6myBEFp1J69eDsfnKmu6jao9xusrBs/jcSskoyRGhrLmJex+4WsDBdcADo8uqqGzxfTRbiFC/i1PxC5H76aA==}
+    engines: {node: '>= 10'}
+    optionalDependencies:
+      '@faga/tokei-core-darwin-arm64': 0.0.9
+      '@faga/tokei-core-darwin-x64': 0.0.9
+      '@faga/tokei-core-win32-x64-msvc': 0.0.9
+    dev: false
+
+  /@faga/tokei@0.0.14:
+    resolution: {integrity: sha512-1q3iU0+8bwdZaqTypI0nVmv4/X9tjJ18bBfWYSGPJxLN01b6pxKHHwY4de2Gl0poqKGF/zkNxxX4JBiUtjzWOQ==}
+    dependencies:
+      '@faga/tokei-core': 0.0.9
+    dev: false
 
   /@jest/schemas@29.6.3:
     resolution: {integrity: sha512-mo5j5X+jIZmJQveBKeS/clAueipV7KgiX1vMgCxam1RNYiqE1w62n0/tJJnHtjW8ZHcQco5gY85jA3mi0L+nSA==}
