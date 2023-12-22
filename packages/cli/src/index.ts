@@ -1,5 +1,6 @@
 import * as Args from "@effect/cli/Args"
 import * as Command from "@effect/cli/Command"
+import * as Options from "@effect/cli/Options"
 import * as NodeContext from "@effect/platform-node/NodeContext"
 import * as Runtime from "@effect/platform-node/Runtime"
 import * as FS from "@effect/platform/FileSystem"
@@ -121,8 +122,9 @@ const myakuCollect = Command.make(
   "collect",
   {
     config: Args.path({ name: "config" }),
+    noCache: Options.boolean("no-cache").pipe(Options.withDefault(false)),
   },
-  ({ config: configPath }) =>
+  ({ config: configPath, noCache }) =>
     Effect.gen(function* ($) {
       const config = yield* $(loadConfig(configPath))
       yield* $(Console.log("Loaded config:"))
@@ -207,6 +209,17 @@ const myakuCollect = Command.make(
           )
 
           if (metricConfig.collector === "myaku/loc") {
+            if (!noCache) {
+              if (yield* $(fs.exists(metricsFilePath))) {
+                yield* $(
+                  Console.log(
+                    `Found data from previous run, skipping collection for commit ${commit.hash}`
+                  )
+                )
+                continue
+              }
+            }
+
             const res = yield* $(
               tokei({
                 include: [repoDir],
