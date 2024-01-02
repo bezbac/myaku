@@ -1,4 +1,5 @@
 use anyhow::Result;
+use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use log::info;
@@ -100,7 +101,24 @@ fn main() -> Result<()> {
 
             fs::create_dir_all(tempdir.path())?;
 
-            info!("{}", tempdir.path().display());
+            info!(
+                "Cloning repository {repository_name} into {}",
+                &tempdir.path().display()
+            );
+
+            let auth = GitAuthenticator::default();
+            let git_config = git2::Config::open_default()?;
+            let mut repo_builder = git2::build::RepoBuilder::new();
+            let mut fetch_options = git2::FetchOptions::new();
+            let mut remote_callbacks = git2::RemoteCallbacks::new();
+
+            remote_callbacks.credentials(auth.credentials(&git_config));
+            fetch_options.remote_callbacks(remote_callbacks);
+            repo_builder.fetch_options(fetch_options);
+
+            let repo = repo_builder.clone(&config.reference.url, tempdir.path())?;
+
+            info!("Successfully cloned repository");
         }
         None => {}
     }
