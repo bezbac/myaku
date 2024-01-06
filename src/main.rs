@@ -2,7 +2,7 @@ use anyhow::Result;
 use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
-use git2::{Oid, Repository, Signature, Sort};
+use git2::{Repository, Signature, Sort};
 use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use tempdir::TempDir;
+use tokei::Languages;
 
 #[derive(Serialize, Deserialize, Debug)]
 enum Collector {
@@ -139,19 +139,16 @@ fn main() -> Result<()> {
             info!("Loaded config");
 
             let repository_name = get_repository_name_from_url(&config.reference.url);
-            let repository_tempdir_name = Regex::new(r"[^a-zA-Z0-9]")
-                .unwrap()
-                .replace_all(&repository_name, "");
 
             info!("Collecting metrics for {repository_name}");
 
-            let tempdir = TempDir::new(&repository_tempdir_name)?;
+            let reference_dir = Path::new("./reference");
 
-            fs::create_dir_all(tempdir.path())?;
+            fs::create_dir_all(reference_dir)?;
 
             info!(
                 "Cloning repository {repository_name} into {}",
-                &tempdir.path().display()
+                &reference_dir.display()
             );
 
             let auth = GitAuthenticator::default();
@@ -164,7 +161,7 @@ fn main() -> Result<()> {
             fetch_options.remote_callbacks(remote_callbacks);
             repo_builder.fetch_options(fetch_options);
 
-            let repo = repo_builder.clone(&config.reference.url, tempdir.path())?;
+            let repo = repo_builder.clone(&config.reference.url, reference_dir)?;
 
             info!("Successfully cloned repository");
 
@@ -179,6 +176,45 @@ fn main() -> Result<()> {
             let mut commits_file = File::create(output_dir.join("commits.json"))?;
             let commits_file_content = serde_json::to_string(&commits)?;
             commits_file.write_all(commits_file_content.as_bytes())?;
+
+            let metrics_output_dir = output_dir.join("metrics");
+
+            fs::create_dir_all(&metrics_output_dir)?;
+
+            for commit_info in &commits {
+                let refname = &commit_info.id;
+
+                // Checkout commit
+                let (object, _) = repo.revparse_ext(&refname)?;
+                repo.checkout_tree(&object, None)?;
+                repo.set_head_detached(object.id())?;
+
+                for (metric_name, metric) in &config.metrics {
+                    let specific_metric_output_dir =
+                        metrics_output_dir.join(Path::new(metric_name));
+
+                    fs::create_dir_all(&specific_metric_output_dir)?;
+
+                    let metric_value = match metric.collector {
+                        Collector::TotalLoc => {
+                            let mut languages = Languages::new();
+                            languages.get_statistics(
+                                &[reference_dir],
+                                &[".git"],
+                                &tokei::Config::default(),
+                            );
+
+                            languages.total().code
+                        }
+                    };
+
+                    let mut result_file = File::create(
+                        specific_metric_output_dir.join(Path::new(&format!("{refname}.json"))),
+                    )?;
+                    let result_file_content = serde_json::to_string(&metric_value)?;
+                    result_file.write_all(result_file_content.as_bytes())?;
+                }
+            }
         }
         None => {}
     }
