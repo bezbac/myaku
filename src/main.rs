@@ -2,7 +2,7 @@ use anyhow::Result;
 use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
-use git2::{Repository, Signature, Sort};
+use git2::{AutotagOption, Repository, Signature, Sort};
 use log::{debug, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -150,24 +150,66 @@ fn main() -> Result<()> {
 
             fs::create_dir_all(reference_dir)?;
 
-            info!(
-                "Cloning repository {repository_name} into {}",
-                &reference_dir.display()
-            );
-
             let auth = GitAuthenticator::default();
             let git_config = git2::Config::open_default()?;
-            let mut repo_builder = git2::build::RepoBuilder::new();
+
             let mut fetch_options = git2::FetchOptions::new();
             let mut remote_callbacks = git2::RemoteCallbacks::new();
 
             remote_callbacks.credentials(auth.credentials(&git_config));
             fetch_options.remote_callbacks(remote_callbacks);
-            repo_builder.fetch_options(fetch_options);
 
-            let repo = repo_builder.clone(&config.reference.url, reference_dir)?;
+            let repo = if reference_dir.join(".git").exists() {
+                info!("Repository already exists in reference directory");
 
-            info!("Successfully cloned repository");
+                let repo = Repository::open(reference_dir)?;
+
+                {
+                    let remote = &mut repo
+                        .find_remote("origin")
+                        .or_else(|_| repo.remote_anonymous("origin"))?;
+
+                    info!("Updating repository");
+                    {
+                        remote.download(&[] as &[&str], Some(&mut fetch_options))?;
+                        remote.disconnect()?;
+                        remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
+                    }
+
+                    // Reset to latest state of origin
+
+                    let branch = match config.reference.branch {
+                        Some(branch) => branch,
+                        None => remote.default_branch()?.as_str().unwrap().to_string(),
+                    };
+
+                    let refname = format!("origin/{branch}");
+
+                    let (object, _) = repo.revparse_ext(&refname)?;
+                    repo.checkout_tree(&object, None)?;
+                    repo.set_head_detached(object.id())?;
+                }
+
+                repo
+            } else {
+                info!(
+                    "Cloning repository {repository_name} into {}",
+                    &reference_dir.display()
+                );
+
+                let mut repo_builder = git2::build::RepoBuilder::new();
+                repo_builder.fetch_options(fetch_options);
+
+                if let Some(branch) = config.reference.branch {
+                    repo_builder.branch(&branch);
+                }
+
+                let repo = repo_builder.clone(&config.reference.url, reference_dir)?;
+
+                info!("Successfully cloned repository");
+
+                repo
+            };
 
             info!("Collecting commit information");
 
