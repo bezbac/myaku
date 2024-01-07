@@ -3,7 +3,7 @@ use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use git2::{Repository, Signature, Sort};
-use log::info;
+use log::{debug, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,6 +57,9 @@ enum Commands {
     Collect {
         #[arg(short, long, value_name = "FILE")]
         config: PathBuf,
+
+        #[arg(short, long, action = clap::ArgAction::SetTrue)]
+        no_cache: bool,
     },
 }
 
@@ -133,6 +136,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Some(Commands::Collect {
             config: config_path,
+            no_cache: disable_cache,
         }) => {
             let config = load_config(config_path)?;
 
@@ -193,6 +197,16 @@ fn main() -> Result<()> {
                     let specific_metric_output_dir =
                         metrics_output_dir.join(Path::new(metric_name));
 
+                    let output_file_path =
+                        specific_metric_output_dir.join(Path::new(&format!("{refname}.json")));
+
+                    if disable_cache == &false {
+                        if output_file_path.exists() {
+                            debug!("Found data from previous run for metric {metric_name} and commit {refname}, skipping collection");
+                            continue;
+                        }
+                    }
+
                     fs::create_dir_all(&specific_metric_output_dir)?;
 
                     let metric_value = match metric.collector {
@@ -208,9 +222,7 @@ fn main() -> Result<()> {
                         }
                     };
 
-                    let mut result_file = File::create(
-                        specific_metric_output_dir.join(Path::new(&format!("{refname}.json"))),
-                    )?;
+                    let mut result_file = File::create(output_file_path)?;
                     let result_file_content = serde_json::to_string(&metric_value)?;
                     result_file.write_all(result_file_content.as_bytes())?;
                 }
