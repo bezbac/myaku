@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
@@ -7,6 +7,7 @@ use log::{debug, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Formatter;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
@@ -82,15 +83,30 @@ fn get_repository_name_from_url(url: &str) -> String {
     caps["main"].to_string()
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Author {
     name: Option<String>,
     email: Option<String>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+struct CommitHash(String);
+
+impl From<String> for CommitHash {
+    fn from(item: String) -> Self {
+        CommitHash(item)
+    }
+}
+
+impl std::fmt::Display for CommitHash {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct CommitInfo {
-    id: String,
+    id: CommitHash,
     author: Author,
     committer: Author,
     message: Option<String>,
@@ -117,7 +133,7 @@ fn get_commits(repo: &Repository) -> Result<Vec<CommitInfo>> {
         let oid = id?;
         let commit = repo.find_commit(oid)?;
         commits.push(CommitInfo {
-            id: commit.id().to_string(),
+            id: commit.id().to_string().into(),
             author: commit.author().into(),
             committer: commit.committer().into(),
             message: commit.message().map(|v| v.to_string()),
@@ -126,6 +142,84 @@ fn get_commits(repo: &Repository) -> Result<Vec<CommitInfo>> {
     }
 
     Ok(commits)
+}
+
+trait Output {
+    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()>;
+
+    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<String>>;
+    fn set_metric(&mut self, metric_name: &str, commit: &CommitHash, value: &str) -> Result<()>;
+}
+
+struct FileOutput {
+    base: PathBuf,
+}
+
+impl Default for FileOutput {
+    fn default() -> Self {
+        Self {
+            base: PathBuf::from(".myaku/"),
+        }
+    }
+}
+
+impl FileOutput {
+    fn get_metric_dir(&self, metric_name: &str) -> PathBuf {
+        self.base.join("metrics").join(Path::new(metric_name))
+    }
+
+    fn get_metric_file(&self, metric_name: &str, commit: &CommitHash) -> PathBuf {
+        self.get_metric_dir(metric_name)
+            .join(Path::new(&format!("{commit}.json")))
+    }
+}
+
+impl Output for FileOutput {
+    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<String>> {
+        let file_path = self.get_metric_file(metric_name, commit);
+
+        if !file_path.exists() {
+            return Ok(None);
+        }
+
+        let file = File::open(file_path).unwrap();
+        let mut output = Vec::new();
+        let mut reader = BufReader::new(file);
+
+        reader.read_to_end(&mut output)?;
+
+        let output = String::from_utf8(output)?;
+
+        return Ok(Some(output));
+    }
+
+    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
+        let file_path: PathBuf = self.base.join("commits.json");
+
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut file = File::create(file_path)?;
+        let contents: String = serde_json::to_string(&commits)?;
+        file.write_all(contents.as_bytes())?;
+
+        Ok(())
+    }
+
+    fn set_metric(&mut self, metric_name: &str, commit: &CommitHash, value: &str) -> Result<()> {
+        let file_path = self.get_metric_file(metric_name, commit);
+
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut file = File::create(file_path)?;
+        let contents = serde_json::to_string(&value)?;
+        file.write_all(contents.as_bytes())?;
+
+        Ok(())
+    }
 }
 
 fn main() -> Result<()> {
@@ -215,41 +309,27 @@ fn main() -> Result<()> {
 
             let commits = get_commits(&repo)?;
 
-            let output_dir = Path::new(".myaku");
+            let mut output = FileOutput::default();
 
-            fs::create_dir_all(output_dir)?;
-
-            let mut commits_file = File::create(output_dir.join("commits.json"))?;
-            let commits_file_content = serde_json::to_string(&commits)?;
-            commits_file.write_all(commits_file_content.as_bytes())?;
-
-            let metrics_output_dir = output_dir.join("metrics");
-
-            fs::create_dir_all(&metrics_output_dir)?;
+            output.set_commits(&commits)?;
 
             for commit_info in &commits {
                 let refname = &commit_info.id;
 
                 // Checkout commit
-                let (object, _) = repo.revparse_ext(&refname)?;
+                let (object, _) = repo.revparse_ext(&refname.0)?;
                 repo.checkout_tree(&object, None)?;
                 repo.set_head_detached(object.id())?;
 
                 for (metric_name, metric) in &config.metrics {
-                    let specific_metric_output_dir =
-                        metrics_output_dir.join(Path::new(metric_name));
-
-                    let output_file_path =
-                        specific_metric_output_dir.join(Path::new(&format!("{refname}.json")));
-
                     if disable_cache == &false {
-                        if output_file_path.exists() {
+                        let cached = output.get_metric(metric_name, refname)?;
+
+                        if let Some(_) = cached {
                             debug!("Found data from previous run for metric {metric_name} and commit {refname}, skipping collection");
                             continue;
                         }
                     }
-
-                    fs::create_dir_all(&specific_metric_output_dir)?;
 
                     let metric_value = match metric.collector {
                         Collector::TotalLoc => {
@@ -264,9 +344,7 @@ fn main() -> Result<()> {
                         }
                     };
 
-                    let mut result_file = File::create(output_file_path)?;
-                    let result_file_content = serde_json::to_string(&metric_value)?;
-                    result_file.write_all(result_file_content.as_bytes())?;
+                    output.set_metric(metric_name, refname, &metric_value.to_string())?;
                 }
             }
         }

@@ -1,5 +1,5 @@
 [reference]
-url = "git@github.com:RockstarLang/rockstar.git"
+url = "https://github.com/RockstarLang/rockstar.git"
 branch = "main"
 
 [metrics]
