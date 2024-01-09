@@ -5,7 +5,7 @@ use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
 use git2::{AutotagOption, Repository, Signature, Sort};
-use log::{debug, info};
+use log::{debug, error, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,6 +14,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use tokei::Languages;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -228,7 +229,7 @@ impl Output for FileOutput {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
@@ -285,9 +286,18 @@ fn main() -> Result<()> {
                 let repo = Repository::open(reference_dir)?;
 
                 {
-                    let remote = &mut repo
-                        .find_remote("origin")
-                        .or_else(|_| repo.remote_anonymous("origin"))?;
+                    let remote_name = "origin";
+
+                    let remote = &mut repo.find_remote(remote_name)?;
+
+                    let remote_url = remote
+                        .url()
+                        .ok_or(anyhow::anyhow!("Remote {} is missing a url", remote_name))?;
+
+                    if remote_url != config.reference.url {
+                        error!("Reference repository doesn't match config");
+                        return Ok(ExitCode::from(1));
+                    }
 
                     info!("Updating repository");
                     {
@@ -392,5 +402,5 @@ fn main() -> Result<()> {
         None => {}
     }
 
-    Ok(())
+    Ok(ExitCode::from(0))
 }
