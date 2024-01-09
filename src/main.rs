@@ -1,6 +1,8 @@
 use anyhow::{Ok, Result};
 use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
+use console::colors_enabled;
+use env_logger::fmt::Color;
 use env_logger::Env;
 use git2::{AutotagOption, Repository, Signature, Sort};
 use log::{debug, info};
@@ -50,6 +52,10 @@ struct Config {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    /// Disable colors
+    no_color: bool,
 }
 
 #[derive(Subcommand)]
@@ -223,9 +229,29 @@ impl Output for FileOutput {
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-
     let cli = Cli::parse();
+
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .format(move |buf, record| {
+            let mut style = buf.style();
+
+            if colors_enabled() && !cli.no_color {
+                if record.level() == log::Level::Warn {
+                    style.set_color(Color::Yellow).set_bold(true);
+                }
+
+                if record.level() == log::Level::Error {
+                    style.set_color(Color::Red).set_bold(true);
+                }
+
+                if record.level() == log::Level::Debug {
+                    style.set_color(Color::Ansi256(240));
+                }
+            }
+
+            writeln!(buf, "{}", style.value(record.args()))
+        })
+        .init();
 
     match &cli.command {
         Some(Commands::Collect {
@@ -234,7 +260,7 @@ fn main() -> Result<()> {
         }) => {
             let config = load_config(config_path)?;
 
-            info!("Loaded config");
+            info!("Loaded config from {}", config_path.display());
 
             let repository_name = get_repository_name_from_url(&config.reference.url);
 
@@ -282,6 +308,8 @@ fn main() -> Result<()> {
                     let (object, _) = repo.revparse_ext(&refname)?;
                     repo.checkout_tree(&object, None)?;
                     repo.set_head_detached(object.id())?;
+
+                    info!("Repository refreshed successfully");
                 }
 
                 repo
@@ -313,6 +341,9 @@ fn main() -> Result<()> {
 
             output.set_commits(&commits)?;
 
+            let mut new_metric_count = 0;
+            let mut reused_metric_count = 0;
+
             for commit_info in &commits {
                 let refname = &commit_info.id;
 
@@ -327,6 +358,7 @@ fn main() -> Result<()> {
 
                         if let Some(_) = cached {
                             debug!("Found data from previous run for metric {metric_name} and commit {refname}, skipping collection");
+                            reused_metric_count += 1;
                             continue;
                         }
                     }
@@ -344,9 +376,18 @@ fn main() -> Result<()> {
                         }
                     };
 
+                    new_metric_count += 1;
+
                     output.set_metric(metric_name, refname, &metric_value.to_string())?;
                 }
             }
+
+            info!(
+                "Collected {} data points for {} metrics ({} reused)",
+                new_metric_count + reused_metric_count,
+                config.metrics.len(),
+                reused_metric_count
+            )
         }
         None => {}
     }
