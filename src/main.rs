@@ -7,6 +7,7 @@ use env_logger::Env;
 use git2::{AutotagOption, Repository, Signature, Sort};
 use log::{debug, info};
 use regex::Regex;
+use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Formatter;
@@ -16,31 +17,31 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokei::Languages;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
 enum Collector {
     #[serde(rename = "total-loc")]
     TotalLoc,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "kebab-case")]
 enum Frequency {
     PerCommit,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
 struct MetricConfig {
     collector: Collector,
     frequency: Frequency,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
 struct GitRepository {
     url: String,
     branch: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug)]
 struct Config {
     reference: GitRepository,
     metrics: HashMap<String, MetricConfig>,
@@ -68,6 +69,21 @@ enum Commands {
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
     },
+
+    /// Subcommands regarding the config file
+    Config(ConfigCommandsParser),
+}
+
+#[derive(Parser)]
+pub struct ConfigCommandsParser {
+    #[structopt(subcommand)]
+    pub config_commands: ConfigCommands,
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Output the JSON Schema for the configuration file
+    Schema,
 }
 
 fn load_config(path: &PathBuf) -> Result<Config> {
@@ -389,6 +405,14 @@ fn main() -> Result<()> {
                 reused_metric_count
             )
         }
+
+        Some(Commands::Config(args)) => match &args.config_commands {
+            ConfigCommands::Schema => {
+                let schema = schema_for!(Config);
+                println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+            }
+        },
+
         None => {}
     }
 

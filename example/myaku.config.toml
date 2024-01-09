@@ -1,9 +1,0 @@
-[reference]
-url = "https://github.com/RockstarLang/rockstar.git"
-branch = "main"
-
-[metrics]
-
-[metrics.loc]
-collector = "total-loc"
-frequency = "per-commit"
