@@ -66,6 +66,9 @@ enum Commands {
         #[arg(short, long, value_name = "FILE")]
         config: PathBuf,
 
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
     },
@@ -162,10 +165,10 @@ struct FileOutput {
     base: PathBuf,
 }
 
-impl Default for FileOutput {
-    fn default() -> Self {
+impl FileOutput {
+    fn new(base: &Option<PathBuf>) -> Self {
         Self {
-            base: PathBuf::from(".myaku/"),
+            base: base.clone().unwrap_or(PathBuf::from(".myaku/")),
         }
     }
 }
@@ -258,6 +261,7 @@ fn main() -> Result<ExitCode> {
         Some(Commands::Collect {
             config: config_path,
             no_cache: disable_cache,
+            output: outut_directory,
         }) => {
             let config = load_config(config_path)?;
 
@@ -347,7 +351,7 @@ fn main() -> Result<ExitCode> {
 
             let commits = get_commits(&repo)?;
 
-            let mut output = FileOutput::default();
+            let mut output = FileOutput::new(outut_directory);
 
             output.set_commits(&commits)?;
 
