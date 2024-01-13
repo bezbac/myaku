@@ -1,11 +1,11 @@
 use anyhow::{Ok, Result};
-use auth_git2::GitAuthenticator;
 use clap::{Parser, Subcommand};
 use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
-use git2::{AutotagOption, Repository, Signature, Sort};
-use log::{debug, error, info};
+use execute::Execute;
+use git2::{Repository, Signature, Sort};
+use log::{debug, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use tokei::Languages;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -275,77 +275,73 @@ fn main() -> Result<ExitCode> {
 
             fs::create_dir_all(reference_dir)?;
 
-            let auth = GitAuthenticator::default();
-            let git_config = git2::Config::open_default()?;
+            let git_path = "git";
 
-            let mut fetch_options = git2::FetchOptions::new();
-            let mut remote_callbacks = git2::RemoteCallbacks::new();
-
-            remote_callbacks.credentials(auth.credentials(&git_config));
-            fetch_options.remote_callbacks(remote_callbacks);
-
-            let repo = if reference_dir.join(".git").exists() {
+            if reference_dir.join(".git").exists() {
                 info!("Repository already exists in reference directory");
 
-                let repo = Repository::open(reference_dir)?;
-
+                // Fetch latest state
                 {
-                    let remote_name = "origin";
-
-                    let remote = &mut repo.find_remote(remote_name)?;
-
-                    let remote_url = remote
-                        .url()
-                        .ok_or(anyhow::anyhow!("Remote {} is missing a url", remote_name))?;
-
-                    if remote_url != config.reference.url {
-                        error!("Reference repository doesn't match config");
-                        return Ok(ExitCode::from(1));
-                    }
-
-                    info!("Updating repository");
-                    {
-                        remote.download(&[] as &[&str], Some(&mut fetch_options))?;
-                        remote.disconnect()?;
-                        remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
-                    }
-
-                    // Reset to latest state of origin
-
-                    let branch = match config.reference.branch {
-                        Some(branch) => branch,
-                        None => remote.default_branch()?.as_str().unwrap().to_string(),
-                    };
-
-                    let refname = format!("origin/{branch}");
-
-                    let (object, _) = repo.revparse_ext(&refname)?;
-                    repo.checkout_tree(&object, None)?;
-                    repo.set_head_detached(object.id())?;
-
-                    info!("Repository refreshed successfully");
+                    let mut command = Command::new(git_path);
+                    command.current_dir(reference_dir);
+                    command.arg("fetch");
+                    command.execute_check_exit_status_code(0)?;
                 }
 
-                repo
+                info!("Repository refreshed successfully");
             } else {
                 info!(
                     "Cloning repository {repository_name} into {}",
                     &reference_dir.display()
                 );
 
-                let mut repo_builder = git2::build::RepoBuilder::new();
-                repo_builder.fetch_options(fetch_options);
-
-                if let Some(branch) = config.reference.branch {
-                    repo_builder.branch(&branch);
+                // Clone repository
+                {
+                    let mut command = Command::new(git_path);
+                    command.arg("clone");
+                    command.arg(&config.reference.url);
+                    command.arg(&reference_dir);
+                    command.execute_check_exit_status_code(0)?;
                 }
 
-                let repo = repo_builder.clone(&config.reference.url, reference_dir)?;
-
                 info!("Successfully cloned repository");
-
-                repo
             };
+
+            let repo = Repository::open(reference_dir)?;
+
+            let branch = match &config.reference.branch {
+                Some(branch) => branch,
+                None => {
+                    let attempts = vec!["master", "main", "dev", "development", "develop"];
+
+                    let mut found = Option::None;
+
+                    for attempt in attempts {
+                        match repo
+                            .find_branch(&format!("origin/{}", attempt), git2::BranchType::Remote)
+                        {
+                            Result::Ok(_) => {
+                                debug!("Found branch {attempt} in repository");
+                                found = Some(attempt);
+                                break;
+                            }
+                            Result::Err(_) => {
+                                debug!("Branch {attempt} not found in repository");
+                            }
+                        }
+                    }
+
+                    found.ok_or(anyhow::anyhow!("Could not determine mainline branch"))?
+                }
+            };
+
+            // Reset to latest commit
+            {
+                let revstring = format!("origin/{}", branch);
+                let (object, _) = repo.revparse_ext(&revstring)?;
+                repo.checkout_tree(&object, None)?;
+                repo.set_head_detached(object.id())?;
+            }
 
             info!("Collecting commit information");
 
