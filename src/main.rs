@@ -1,21 +1,20 @@
 use std::fs;
 use std::io::Write;
-use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
+use std::str::FromStr;
 
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
-use execute::Execute;
-use git2::Repository;
 use log::{debug, info};
 use tokei::Languages;
 
 use crate::config::{Collector, Config};
-use crate::git::get_commits;
+use crate::git::clone_repository;
+use crate::git::RepositoryHandle;
 use crate::output::{FileOutput, Output};
 
 mod config;
@@ -88,81 +87,45 @@ fn main() -> Result<ExitCode> {
             let repository_name = util::get_repository_name_from_url(&config.reference.url);
             info!("Collecting metrics for {repository_name}");
 
-            let reference_dir = Path::new("./reference");
+            let reference_dir = PathBuf::from_str("./reference")?;
 
-            fs::create_dir_all(reference_dir)?;
+            fs::create_dir_all(&reference_dir)?;
 
-            let git_path = "git";
+            let repo = match RepositoryHandle::open(&reference_dir) {
+                Result::Ok(repo) => {
+                    info!("Repository already exists in reference directory");
 
-            if reference_dir.join(".git").exists() {
-                info!("Repository already exists in reference directory");
+                    repo.fetch()?;
 
-                // Fetch latest state
-                {
-                    let mut command = Command::new(git_path);
-                    command.current_dir(reference_dir);
-                    command.arg("fetch");
-                    command.execute_check_exit_status_code(0)?;
+                    info!("Repository refreshed successfully");
+
+                    repo
                 }
+                // TODO: Check for specific error
+                Result::Err(_) => {
+                    info!(
+                        "Cloning repository {repository_name} into {}",
+                        &reference_dir.display()
+                    );
 
-                info!("Repository refreshed successfully");
-            } else {
-                info!(
-                    "Cloning repository {repository_name} into {}",
-                    &reference_dir.display()
-                );
+                    let repo = clone_repository(&config.reference.url, &reference_dir)?;
 
-                // Clone repository
-                {
-                    let mut command = Command::new(git_path);
-                    command.arg("clone");
-                    command.arg(&config.reference.url);
-                    command.arg(&reference_dir);
-                    command.execute_check_exit_status_code(0)?;
+                    info!("Successfully cloned repository");
+
+                    repo
                 }
-
-                info!("Successfully cloned repository");
             };
-
-            let repo = Repository::open(reference_dir)?;
 
             let branch = match &config.reference.branch {
-                Some(branch) => branch,
-                None => {
-                    let attempts = vec!["master", "main", "dev", "development", "develop"];
-
-                    let mut found = Option::None;
-
-                    for attempt in attempts {
-                        match repo
-                            .find_branch(&format!("origin/{}", attempt), git2::BranchType::Remote)
-                        {
-                            Result::Ok(_) => {
-                                debug!("Found branch {attempt} in repository");
-                                found = Some(attempt);
-                                break;
-                            }
-                            Result::Err(_) => {
-                                debug!("Branch {attempt} not found in repository");
-                            }
-                        }
-                    }
-
-                    found.ok_or(anyhow::anyhow!("Could not determine mainline branch"))?
-                }
+                Some(branch) => branch.clone(),
+                None => repo.find_main_branch()?,
             };
 
-            // Reset to latest commit
-            {
-                let revstring = format!("origin/{}", branch);
-                let (object, _) = repo.revparse_ext(&revstring)?;
-                repo.checkout_tree(&object, None)?;
-                repo.set_head_detached(object.id())?;
-            }
+            repo.reset_hard(&format!("origin/{}", branch))?;
 
             info!("Collecting commit information");
 
-            let commits = get_commits(&repo)?;
+            let commits = repo.get_all_commits()?;
 
             let mut output = FileOutput::new(outut_directory);
 
@@ -170,14 +133,10 @@ fn main() -> Result<ExitCode> {
 
             let mut new_metric_count = 0;
             let mut reused_metric_count = 0;
-
             for commit_info in &commits {
                 let refname = &commit_info.id;
 
-                // Checkout commit
-                let (object, _) = repo.revparse_ext(&refname.0)?;
-                repo.checkout_tree(&object, None)?;
-                repo.set_head_detached(object.id())?;
+                repo.reset_hard(&refname.0)?;
 
                 for (metric_name, metric) in &config.metrics {
                     if disable_cache == &false {
@@ -194,7 +153,7 @@ fn main() -> Result<ExitCode> {
                         Collector::TotalLoc => {
                             let mut languages = Languages::new();
                             languages.get_statistics(
-                                &[reference_dir],
+                                &[&reference_dir],
                                 &[".git"],
                                 &tokei::Config::default(),
                             );
