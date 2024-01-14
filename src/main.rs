@@ -1,51 +1,27 @@
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::{Command, ExitCode};
+
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
 use execute::Execute;
-use git2::{Repository, Signature, Sort};
+use git2::Repository;
 use log::{debug, info};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt::Formatter;
-use std::fs::{self, File};
-use std::io::{BufReader, Read, Write};
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::{Command, ExitCode};
 use tokei::Languages;
 
-#[derive(Serialize, Deserialize, Debug)]
-enum Collector {
-    #[serde(rename = "total-loc")]
-    TotalLoc,
-}
+use crate::config::{Collector, Config};
+use crate::git::get_commits;
+use crate::output::{FileOutput, Output};
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "kebab-case")]
-enum Frequency {
-    PerCommit,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct MetricConfig {
-    collector: Collector,
-    frequency: Frequency,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct GitRepository {
-    url: String,
-    branch: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Config {
-    reference: GitRepository,
-    metrics: HashMap<String, MetricConfig>,
-}
+mod config;
+mod git;
+mod output;
+mod util;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -72,164 +48,6 @@ enum Commands {
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
     },
-}
-
-fn load_config(path: &PathBuf) -> Result<Config> {
-    let file = File::open(path)?;
-    let mut buf_reader = BufReader::new(file);
-    let mut contents = String::new();
-    buf_reader.read_to_string(&mut contents)?;
-
-    let config: Config = toml::from_str(&contents)?;
-
-    Ok(config)
-}
-
-fn get_repository_name_from_url(url: &str) -> String {
-    let re =
-        Regex::new(r"((git|ssh|http(s)?)|(git@[\w\.]+))(:(//)?)(?<main>[\w\.@\:/\-~]+)(\.git)(/)?")
-            .unwrap();
-    let caps = re.captures(url).unwrap();
-    caps["main"].to_string()
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Author {
-    name: Option<String>,
-    email: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct CommitHash(String);
-
-impl From<String> for CommitHash {
-    fn from(item: String) -> Self {
-        CommitHash(item)
-    }
-}
-
-impl std::fmt::Display for CommitHash {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct CommitInfo {
-    id: CommitHash,
-    author: Author,
-    committer: Author,
-    message: Option<String>,
-    time: i64,
-}
-
-impl<'a> From<Signature<'a>> for Author {
-    fn from(item: Signature) -> Self {
-        Author {
-            name: item.name().map(|v| v.to_string()),
-            email: item.email().map(|v| v.to_string()),
-        }
-    }
-}
-
-fn get_commits(repo: &Repository) -> Result<Vec<CommitInfo>> {
-    let mut revwalk = repo.revwalk().unwrap();
-
-    revwalk.set_sorting(Sort::NONE)?;
-    revwalk.push_head()?;
-
-    let mut commits: Vec<_> = Vec::new();
-    for id in revwalk {
-        let oid = id?;
-        let commit = repo.find_commit(oid)?;
-        commits.push(CommitInfo {
-            id: commit.id().to_string().into(),
-            author: commit.author().into(),
-            committer: commit.committer().into(),
-            message: commit.message().map(|v| v.to_string()),
-            time: commit.time().seconds(),
-        })
-    }
-
-    Ok(commits)
-}
-
-trait Output {
-    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()>;
-
-    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<String>>;
-    fn set_metric(&mut self, metric_name: &str, commit: &CommitHash, value: &str) -> Result<()>;
-}
-
-struct FileOutput {
-    base: PathBuf,
-}
-
-impl FileOutput {
-    fn new(base: &Option<PathBuf>) -> Self {
-        Self {
-            base: base.clone().unwrap_or(PathBuf::from(".myaku/")),
-        }
-    }
-}
-
-impl FileOutput {
-    fn get_metric_dir(&self, metric_name: &str) -> PathBuf {
-        self.base.join("metrics").join(Path::new(metric_name))
-    }
-
-    fn get_metric_file(&self, metric_name: &str, commit: &CommitHash) -> PathBuf {
-        self.get_metric_dir(metric_name)
-            .join(Path::new(&format!("{commit}.json")))
-    }
-}
-
-impl Output for FileOutput {
-    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<String>> {
-        let file_path = self.get_metric_file(metric_name, commit);
-
-        if !file_path.exists() {
-            return Ok(None);
-        }
-
-        let file = File::open(file_path).unwrap();
-        let mut output = Vec::new();
-        let mut reader = BufReader::new(file);
-
-        reader.read_to_end(&mut output)?;
-
-        let output = String::from_utf8(output)?;
-
-        return Ok(Some(output));
-    }
-
-    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
-        let file_path: PathBuf = self.base.join("commits.json");
-
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let mut file = File::create(file_path)?;
-        let contents: String = serde_json::to_string(&commits)?;
-        file.write_all(contents.as_bytes())?;
-
-        Ok(())
-    }
-
-    fn set_metric(&mut self, metric_name: &str, commit: &CommitHash, value: &str) -> Result<()> {
-        let file_path = self.get_metric_file(metric_name, commit);
-
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let mut file = File::create(file_path)?;
-        let contents = serde_json::to_string(&value)?;
-        file.write_all(contents.as_bytes())?;
-
-        Ok(())
-    }
 }
 
 fn main() -> Result<ExitCode> {
@@ -263,12 +81,11 @@ fn main() -> Result<ExitCode> {
             no_cache: disable_cache,
             output: outut_directory,
         }) => {
-            let config = load_config(config_path)?;
+            let config = Config::from_file(config_path)?;
 
             info!("Loaded config from {}", config_path.display());
 
-            let repository_name = get_repository_name_from_url(&config.reference.url);
-
+            let repository_name = util::get_repository_name_from_url(&config.reference.url);
             info!("Collecting metrics for {repository_name}");
 
             let reference_dir = Path::new("./reference");
