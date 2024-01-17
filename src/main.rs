@@ -3,12 +3,14 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use tokei::Languages;
 
@@ -52,27 +54,29 @@ enum Commands {
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
-        .format(move |buf, record| {
-            let mut style = buf.style();
+    env_logger::Builder::from_env(
+        Env::default().default_filter_or("info,tokei::language::language_type=off"),
+    )
+    .format(move |buf, record| {
+        let mut style = buf.style();
 
-            if colors_enabled() && !cli.no_color {
-                if record.level() == log::Level::Warn {
-                    style.set_color(Color::Yellow).set_bold(true);
-                }
-
-                if record.level() == log::Level::Error {
-                    style.set_color(Color::Red).set_bold(true);
-                }
-
-                if record.level() == log::Level::Debug {
-                    style.set_color(Color::Ansi256(240));
-                }
+        if colors_enabled() && !cli.no_color {
+            if record.level() == log::Level::Warn {
+                style.set_color(Color::Yellow).set_bold(true);
             }
 
-            writeln!(buf, "{}", style.value(record.args()))
-        })
-        .init();
+            if record.level() == log::Level::Error {
+                style.set_color(Color::Red).set_bold(true);
+            }
+
+            if record.level() == log::Level::Debug {
+                style.set_color(Color::Ansi256(240));
+            }
+        }
+
+        writeln!(buf, "{}", style.value(record.args()))
+    })
+    .init();
 
     match &cli.command {
         Some(Commands::Collect {
@@ -131,8 +135,19 @@ fn main() -> Result<ExitCode> {
 
             output.set_commits(&commits)?;
 
+            info!("Collecting metrics");
+
             let mut new_metric_count = 0;
             let mut reused_metric_count = 0;
+
+            let pb = ProgressBar::new((commits.len() * config.metrics.len()) as u64);
+            let style =
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}]  {msg}")
+                    .unwrap()
+                    .progress_chars("#>-");
+            pb.set_style(style);
+            pb.enable_steady_tick(Duration::from_millis(100));
+
             for commit_info in &commits {
                 let refname = &commit_info.id;
 
@@ -162,16 +177,25 @@ fn main() -> Result<ExitCode> {
                         }
                     };
 
-                    new_metric_count += 1;
-
                     output.set_metric(metric_name, refname, &metric_value.to_string())?;
+
+                    new_metric_count += 1;
+                    pb.inc(1);
+                    pb.set_message(format!(
+                        "{} collected ({} reused)",
+                        new_metric_count + reused_metric_count,
+                        reused_metric_count
+                    ));
                 }
             }
 
+            pb.finish_and_clear();
+
             info!(
-                "Collected {} data points for {} metrics ({} reused)",
+                "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                 new_metric_count + reused_metric_count,
                 config.metrics.len(),
+                pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )
         }
