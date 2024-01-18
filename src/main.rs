@@ -15,8 +15,8 @@ use log::{debug, info};
 use tokei::Languages;
 
 use crate::config::{Collector, Config};
-use crate::git::clone_repository;
 use crate::git::RepositoryHandle;
+use crate::git::{clone_repository, CloneProgress};
 use crate::output::{FileOutput, Output};
 
 mod config;
@@ -112,7 +112,61 @@ fn main() -> Result<ExitCode> {
                         &reference_dir.display()
                     );
 
-                    let repo = clone_repository(&config.reference.url, &reference_dir)?;
+                    let pb = ProgressBar::new(1000);
+                    let style = ProgressStyle::with_template(
+                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                    )
+                    .unwrap()
+                    .progress_chars("#>-");
+                    pb.set_style(style);
+                    pb.enable_steady_tick(Duration::from_millis(100));
+
+                    pb.set_message("Initializing");
+
+                    let repo =
+                        clone_repository(&config.reference.url, &reference_dir, |progress| {
+                            let bar = &pb;
+
+                            match progress {
+                                CloneProgress::EnumeratingObjects => {
+                                    bar.set_message("Enumerating objects");
+                                }
+                                CloneProgress::CountingObjects { finished, total } => {
+                                    bar.set_message(format!(
+                                        "Counting objects [{}, {}]",
+                                        finished, total
+                                    ));
+                                    bar.set_length(*total as u64);
+                                    bar.set_position(*finished as u64);
+                                }
+                                CloneProgress::CompressingObjects { finished, total } => {
+                                    bar.set_message(format!(
+                                        "Compressing objects [{}, {}]",
+                                        finished, total
+                                    ));
+                                    bar.set_length(*total as u64);
+                                    bar.set_position(*finished as u64);
+                                }
+                                CloneProgress::ReceivingObjects { finished, total } => {
+                                    bar.set_message(format!(
+                                        "Receiving objects [{}, {}]",
+                                        finished, total
+                                    ));
+                                    bar.set_length(*total as u64);
+                                    bar.set_position(*finished as u64);
+                                }
+                                CloneProgress::ResolvingDeltas { finished, total } => {
+                                    bar.set_message(format!(
+                                        "Resolving deltas [{}, {}]",
+                                        finished, total
+                                    ));
+                                    bar.set_length(*total as u64);
+                                    bar.set_position(*finished as u64);
+                                }
+                            }
+                        })?;
+
+                    pb.finish_and_clear();
 
                     info!("Successfully cloned repository");
 
@@ -142,11 +196,13 @@ fn main() -> Result<ExitCode> {
 
             let pb = ProgressBar::new((commits.len() * config.metrics.len()) as u64);
             let style =
-                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}]  {msg}")
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
                     .unwrap()
                     .progress_chars("#>-");
             pb.set_style(style);
             pb.enable_steady_tick(Duration::from_millis(100));
+
+            pb.set_message("Initializing");
 
             for commit_info in &commits {
                 let refname = &commit_info.id;
