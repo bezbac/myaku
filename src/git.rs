@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fmt::Formatter,
     io::{BufRead, BufReader},
     path::PathBuf,
@@ -214,6 +215,77 @@ mod test {
     }
 }
 
+struct DelimitedBy<R> {
+    reader: BufReader<R>,
+    delimiters: HashSet<u8>,
+}
+
+fn delimited_by<R>(f: BufReader<R>, delimiters: &[char]) -> DelimitedBy<R> {
+    DelimitedBy {
+        reader: f,
+        delimiters: delimiters.iter().map(|v| *v as u8).collect(),
+    }
+}
+
+impl<R: std::io::Read> Iterator for DelimitedBy<R> {
+    type Item = std::io::Result<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (string, length) = {
+            match self.reader.fill_buf() {
+                Ok(buffer) => {
+                    let line_size = buffer
+                        .iter()
+                        .take_while(|c| !self.delimiters.contains(*c))
+                        .count();
+
+                    if buffer.len() == 0 {
+                        return None;
+                    }
+
+                    let string = String::from_utf8_lossy(&buffer[..line_size]);
+
+                    // Add count of trailing delimiters to length, so that they are also consumed
+                    let mut length = line_size;
+                    if line_size < buffer.len() {
+                        let mut i = 0;
+                        while i < buffer.len() {
+                            if !self.delimiters.contains(&buffer[i]) {
+                                break;
+                            }
+
+                            i += 1;
+                        }
+
+                        length += i;
+                    }
+
+                    (string.to_string(), length)
+                }
+                Err(e) => return Some(Err(e)),
+            }
+        };
+
+        self.reader.consume(length);
+
+        Some(Ok(string))
+    }
+}
+
+struct BufReaderWithDelimitedBy<R>(BufReader<R>);
+
+impl<R> BufReaderWithDelimitedBy<R> {
+    fn delimited_by(self, delimiters: &[char]) -> DelimitedBy<R> {
+        delimited_by(self.0, delimiters)
+    }
+}
+
+impl<R> From<BufReader<R>> for BufReaderWithDelimitedBy<R> {
+    fn from(value: BufReader<R>) -> Self {
+        BufReaderWithDelimitedBy(value)
+    }
+}
+
 pub fn clone_repository(
     url: &str,
     directory: &PathBuf,
@@ -232,51 +304,15 @@ pub fn clone_repository(
 
     let stdout = child.stderr.take().unwrap();
 
-    // Iterator over the strings delimited by `\n` or `\r`
-    // https://github.com/rust-lang/rust/issues/55743#issuecomment-436937262
-    let mut f = BufReader::new(stdout);
-    loop {
-        let length = {
-            let buffer = f.fill_buf()?;
-            let line_size = buffer
-                .iter()
-                .take_while(|c| **c != b'\n' && **c != b'\r')
-                .count();
+    let reader: BufReaderWithDelimitedBy<_> = BufReader::new(stdout).into();
 
-            if buffer.len() == 0 {
-                break;
-            }
-
-            let string = String::from_utf8_lossy(&buffer[..line_size]);
-
-            let progress = CloneProgress::try_from(&string);
-            match progress {
-                Result::Ok(progress) => progress_callback(&progress),
-                Result::Err(err) => debug!("{}", err),
-            }
-
-            line_size
-                + if line_size < buffer.len() {
-                    // we found a delimiter
-                    if line_size + 1 < buffer.len() // we look if we found two delimiter
-                    && buffer[line_size] == b'\r'
-                    && buffer[line_size + 1] == b'\n'
-                    {
-                        2
-                    } else {
-                        1
-                    }
-                } else {
-                    0
-                }
-        };
-
-        f.consume(length);
-    }
-
-    if !child.wait()?.success() {
-        return Err(anyhow::anyhow!("Failed to clone repository"));
-    }
+    reader.delimited_by(&['\n', '\r']).for_each(|line| {
+        let line = line.unwrap();
+        let progress = CloneProgress::try_from(&line);
+        if let Ok(progress) = progress {
+            progress_callback(&progress);
+        }
+    });
 
     Ok(RepositoryHandle {
         path: directory.clone(),
