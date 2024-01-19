@@ -11,7 +11,7 @@ use console::colors_enabled;
 use env_logger::fmt::Color;
 use env_logger::Env;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, info};
+use log::{debug, error, info};
 use tokei::Languages;
 
 use crate::config::{Collector, Config};
@@ -87,6 +87,11 @@ fn main() -> Result<ExitCode> {
             let config = Config::from_file(config_path)?;
 
             info!("Loaded config from {}", config_path.display());
+
+            if config.metrics.len() == 0 {
+                error!("No metrics configured, please add some to your config file");
+                return Ok(ExitCode::from(1));
+            }
 
             let repository_name = util::get_repository_name_from_url(&config.reference.url);
             info!("Collecting metrics for {repository_name}");
