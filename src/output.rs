@@ -20,10 +20,8 @@ pub struct FileOutput {
 }
 
 impl FileOutput {
-    pub fn new(base: &Option<PathBuf>) -> Self {
-        Self {
-            base: base.clone().unwrap_or(PathBuf::from(".myaku/")),
-        }
+    pub fn new(base: &PathBuf) -> Self {
+        Self { base: base.clone() }
     }
 }
 

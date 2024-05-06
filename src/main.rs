@@ -190,7 +190,11 @@ fn main() -> Result<ExitCode> {
 
             let commits = repo.get_all_commits()?;
 
-            let mut output = FileOutput::new(outut_directory);
+            let output_directory = outut_directory
+                .clone()
+                .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
+
+            let mut output = FileOutput::new(&output_directory);
 
             output.set_commits(&commits)?;
 
