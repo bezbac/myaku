@@ -82,6 +82,17 @@ impl RepositoryHandle {
         Ok(())
     }
 
+    pub fn remote_url(&self) -> Result<String> {
+        let git2_repo: Repository = self.into();
+
+        let remote = git2_repo.find_remote("origin")?;
+        let url = remote
+            .url()
+            .ok_or(anyhow::anyhow!("Could not determine remote URL"))?;
+
+        Ok(url.to_string())
+    }
+
     pub fn find_main_branch(&self) -> Result<String> {
         let git2_repo: Repository = self.into();
 

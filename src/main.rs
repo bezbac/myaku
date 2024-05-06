@@ -104,6 +104,12 @@ fn main() -> Result<ExitCode> {
                 Result::Ok(repo) => {
                     info!("Repository already exists in reference directory");
 
+                    let remote_url = repo.remote_url()?;
+                    if remote_url != config.reference.url {
+                        error!("Repository URL in reference directory does not match the one in the config file");
+                        return Ok(ExitCode::from(1));
+                    }
+
                     repo.fetch()?;
 
                     info!("Repository refreshed successfully");
