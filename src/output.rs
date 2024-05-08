@@ -77,8 +77,7 @@ impl Output for FileOutput {
         }
 
         let mut file = File::create(file_path)?;
-        let contents = serde_json::to_string(&value)?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(value.as_bytes())?;
 
         Ok(())
     }

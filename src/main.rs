@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use env_logger::fmt::Color;
 use env_logger::Env;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info};
-use tokei::Languages;
+use tokei::{LanguageType, Languages};
 
 use crate::config::{Collector, Config};
 use crate::git::RepositoryHandle;
@@ -243,8 +244,22 @@ fn main() -> Result<ExitCode> {
                                 &[".git"],
                                 &tokei::Config::default(),
                             );
-
-                            languages.total().code
+                            let value = languages.total().code;
+                            serde_json::to_string(&value)?
+                        }
+                        Collector::Loc => {
+                            let mut languages = Languages::new();
+                            languages.get_statistics(
+                                &[&reference_dir],
+                                &[".git"],
+                                &tokei::Config::default(),
+                            );
+                            let value: BTreeMap<&LanguageType, usize> = languages
+                                .iter()
+                                .map(|(lang, info)| (lang, info.code))
+                                .filter(|(_, value)| *value > 0)
+                                .collect();
+                            serde_json::to_string(&value)?
                         }
                     };
 

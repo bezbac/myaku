@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 pub enum Collector {
     #[serde(rename = "total-loc")]
     TotalLoc,
+    #[serde(rename = "loc")]
+    Loc,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
