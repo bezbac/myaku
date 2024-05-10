@@ -6,10 +6,12 @@ use std::{
 
 use anyhow::Result;
 
-use crate::git::{CommitHash, CommitInfo};
+use crate::git::{CommitHash, CommitInfo, CommitTagInfo};
 
 pub trait Output {
     fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()>;
+
+    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()>;
 
     fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<String>>;
     fn set_metric(&mut self, metric_name: &str, commit: &CommitHash, value: &str) -> Result<()>;
@@ -64,6 +66,20 @@ impl Output for FileOutput {
 
         let mut file = File::create(file_path)?;
         let contents: String = serde_json::to_string(&commits)?;
+        file.write_all(contents.as_bytes())?;
+
+        Ok(())
+    }
+
+    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()> {
+        let file_path: PathBuf = self.base.join("commit_tags.json");
+
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut file = File::create(file_path)?;
+        let contents: String = serde_json::to_string(&commit_tags)?;
         file.write_all(contents.as_bytes())?;
 
         Ok(())

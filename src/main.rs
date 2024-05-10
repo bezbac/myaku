@@ -205,6 +205,12 @@ fn main() -> Result<ExitCode> {
 
             output.set_commits(&commits)?;
 
+            info!("Collecting tag information");
+
+            let tags = repo.get_all_commit_tags()?;
+
+            output.set_commit_tags(&tags)?;
+
             info!("Collecting metrics");
 
             let mut new_metric_count = 0;

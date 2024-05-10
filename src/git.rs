@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use execute::Execute;
-use git2::{Repository, Signature, Sort};
+use git2::{Oid, Repository, Signature, Sort};
 use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,12 @@ impl From<String> for CommitHash {
     }
 }
 
+impl From<Oid> for CommitHash {
+    fn from(item: Oid) -> Self {
+        CommitHash(item.to_string())
+    }
+}
+
 impl std::fmt::Display for CommitHash {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -41,6 +47,12 @@ pub struct CommitInfo {
     pub committer: Author,
     pub message: Option<String>,
     pub time: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CommitTagInfo {
+    pub name: String,
+    pub commit: CommitHash,
 }
 
 impl<'a> From<Signature<'a>> for Author {
@@ -147,6 +159,59 @@ impl RepositoryHandle {
         }
 
         Ok(commits)
+    }
+
+    pub fn get_all_commit_tags(&self) -> Result<Vec<CommitTagInfo>> {
+        let git2_repo: Repository = self.into();
+
+        let mut tag_ids_and_names: Vec<(Oid, Vec<u8>)> = Vec::new();
+
+        git2_repo.tag_foreach(|tag_id, name| {
+            tag_ids_and_names.push((tag_id, name.to_vec()));
+            true
+        })?;
+
+        let mut tags = Vec::new();
+
+        for (tag_id, tag_name) in tag_ids_and_names {
+            let tag_name = String::from_utf8(tag_name)?;
+            let tag_name = tag_name.strip_prefix("refs/tags/").ok_or(anyhow::anyhow!(
+                "Tag name has an unexpected format: {}",
+                tag_name
+            ))?;
+
+            let tag = match git2_repo.find_tag(tag_id) {
+                Ok(tag) => tag,
+                Err(_) => {
+                    // The tag id might point to a commit
+
+                    let commit = git2_repo.find_commit(tag_id);
+
+                    if let Some(commit) = commit.ok() {
+                        tags.push(CommitTagInfo {
+                            name: tag_name.to_string(),
+                            commit: commit.id().into(),
+                        });
+                    }
+
+                    continue;
+                }
+            };
+
+            let commit_id = tag.target_id();
+
+            let commit = match git2_repo.find_commit(commit_id) {
+                Ok(commit) => commit,
+                Err(_) => continue,
+            };
+
+            tags.push(CommitTagInfo {
+                name: tag_name.to_string(),
+                commit: commit.id().into(),
+            });
+        }
+
+        Ok(tags)
     }
 }
 
