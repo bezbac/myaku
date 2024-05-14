@@ -267,6 +267,12 @@ fn main() -> Result<ExitCode> {
                                 .collect();
                             serde_json::to_string(&value)?
                         }
+                        Collector::TotalDiffStat => {
+                            let (files_changed, insertions, deletions) =
+                                repo.get_current_total_diff_stat().unwrap_or((0, 0, 0));
+
+                            serde_json::to_string(&(files_changed, insertions, deletions))?
+                        }
                     };
 
                     output.set_metric(metric_name, refname, &metric_value.to_string())?;

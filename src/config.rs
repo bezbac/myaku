@@ -14,6 +14,8 @@ pub enum Collector {
     TotalLoc,
     #[serde(rename = "loc")]
     Loc,
+    #[serde(rename = "total-diff-stat")]
+    TotalDiffStat,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

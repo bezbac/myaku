@@ -6,3 +6,7 @@ url = "https://github.com/RockstarLang/rockstar.git"
 [metrics.loc]
 collector = "total-loc"
 frequency = "per-commit"
+
+[metrics.diff]
+collector = "total-diff-stat"
+frequency = "per-commit"
