@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -13,13 +12,14 @@ use env_logger::fmt::Color;
 use env_logger::Env;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info};
-use tokei::{LanguageType, Languages};
 
-use crate::config::{Collector, Config};
+use crate::collectors::Collector;
+use crate::config::Config;
 use crate::git::RepositoryHandle;
 use crate::git::{clone_repository, CloneProgress};
 use crate::output::{FileOutput, Output};
 
+mod collectors;
 mod config;
 mod git;
 mod output;
@@ -242,38 +242,7 @@ fn main() -> Result<ExitCode> {
                         }
                     }
 
-                    let metric_value = match metric.collector {
-                        Collector::TotalLoc => {
-                            let mut languages = Languages::new();
-                            languages.get_statistics(
-                                &[&reference_dir],
-                                &[".git"],
-                                &tokei::Config::default(),
-                            );
-                            let value = languages.total().code;
-                            serde_json::to_string(&value)?
-                        }
-                        Collector::Loc => {
-                            let mut languages = Languages::new();
-                            languages.get_statistics(
-                                &[&reference_dir],
-                                &[".git"],
-                                &tokei::Config::default(),
-                            );
-                            let value: BTreeMap<&LanguageType, usize> = languages
-                                .iter()
-                                .map(|(lang, info)| (lang, info.code))
-                                .filter(|(_, value)| *value > 0)
-                                .collect();
-                            serde_json::to_string(&value)?
-                        }
-                        Collector::TotalDiffStat => {
-                            let (files_changed, insertions, deletions) =
-                                repo.get_current_total_diff_stat().unwrap_or((0, 0, 0));
-
-                            serde_json::to_string(&(files_changed, insertions, deletions))?
-                        }
-                    };
+                    let metric_value = metric.collector.collect(&repo)?;
 
                     output.set_metric(metric_name, refname, &metric_value.to_string())?;
 

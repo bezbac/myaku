@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum Collector {
+pub enum CollectorConfig {
     #[serde(rename = "total-loc")]
     TotalLoc,
     #[serde(rename = "loc")]
@@ -26,7 +26,7 @@ pub enum Frequency {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetricConfig {
-    pub collector: Collector,
+    pub collector: CollectorConfig,
     pub frequency: Frequency,
 }
 

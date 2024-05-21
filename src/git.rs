@@ -67,7 +67,7 @@ impl<'a> From<Signature<'a>> for Author {
 const GIT_BINARY_PATH: &str = "git";
 
 pub struct RepositoryHandle {
-    path: PathBuf,
+    pub path: PathBuf,
 }
 
 impl From<&RepositoryHandle> for Repository {
