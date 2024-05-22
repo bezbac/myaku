@@ -16,6 +16,8 @@ pub enum CollectorConfig {
     Loc,
     #[serde(rename = "total-diff-stat")]
     TotalDiffStat,
+    #[serde(rename = "total-cargo-deps")]
+    TotalCargoDeps,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

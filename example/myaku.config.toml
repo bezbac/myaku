@@ -1,5 +1,5 @@
 [reference]
-url = "https://github.com/RockstarLang/rockstar.git"
+url = "git@github.com:bezbac/myaku.git"
 
 [metrics]
 
@@ -9,4 +9,8 @@ frequency = "per-commit"
 
 [metrics.diff]
 collector = "total-diff-stat"
+frequency = "per-commit"
+
+[metrics.deps]
+collector = "total-cargo-deps"
 frequency = "per-commit"
