@@ -14,3 +14,8 @@ frequency = "per-commit"
 [metrics.deps]
 collector = "total-cargo-deps"
 frequency = "per-commit"
+
+[metrics.total-pattern-occurences]
+collector = "total-pattern-occurences"
+frequency = "per-commit"
+pattern = "\\/\\/ TODO"

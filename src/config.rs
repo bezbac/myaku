@@ -9,6 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "collector")]
 pub enum CollectorConfig {
     #[serde(rename = "total-loc")]
     TotalLoc,
@@ -18,6 +19,8 @@ pub enum CollectorConfig {
     TotalDiffStat,
     #[serde(rename = "total-cargo-deps")]
     TotalCargoDeps,
+    #[serde(rename = "total-pattern-occurences")]
+    TotalPatternOccurences { pattern: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,6 +31,7 @@ pub enum Frequency {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetricConfig {
+    #[serde(flatten)]
     pub collector: CollectorConfig,
     pub frequency: Frequency,
 }

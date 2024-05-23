@@ -6,6 +6,10 @@ use std::{
 
 use anyhow::Result;
 use cargo_lock::Lockfile;
+use grep::{
+    regex::RegexMatcher,
+    searcher::{SearcherBuilder, Sink, SinkError},
+};
 use serde::Deserialize;
 use tokei::{LanguageType, Languages};
 use walkdir::WalkDir;
@@ -133,6 +137,87 @@ impl Collector for TotalCargoDependencies {
     }
 }
 
+struct SimpleGrepSinkMatch {}
+
+struct SimpleGrepSink {
+    matches: Vec<SimpleGrepSinkMatch>,
+}
+
+impl SimpleGrepSink {
+    pub fn new() -> Self {
+        Self {
+            matches: Vec::new(),
+        }
+    }
+
+    pub fn total_matches(&self) -> usize {
+        return self.matches.len();
+    }
+}
+
+#[derive(Debug)]
+struct SimpleGrepSinkError {
+    message: String,
+}
+
+impl std::fmt::Display for SimpleGrepSinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SimpleGrepSinkError {}
+
+impl SinkError for SimpleGrepSinkError {
+    fn error_message<T: std::fmt::Display>(message: T) -> Self {
+        Self {
+            message: message.to_string(),
+        }
+    }
+}
+
+impl Sink for &mut SimpleGrepSink {
+    type Error = SimpleGrepSinkError;
+
+    fn matched(
+        &mut self,
+        _searcher: &grep::searcher::Searcher,
+        _mat: &grep::searcher::SinkMatch<'_>,
+    ) -> std::prelude::v1::Result<bool, Self::Error> {
+        self.matches.push(SimpleGrepSinkMatch {});
+        Ok(true)
+    }
+}
+
+struct TotalPatternOccurences {
+    pattern: String,
+}
+
+impl Collector for TotalPatternOccurences {
+    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+        let matcher = RegexMatcher::new(&self.pattern)?;
+        let mut searcher = SearcherBuilder::new().line_number(true).build();
+
+        let mut sink = SimpleGrepSink::new();
+
+        for entry in WalkDir::new(&repo.path).into_iter() {
+            let entry = entry?;
+
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            searcher.search_path(&matcher, entry.path(), &mut sink)?;
+        }
+
+        let total_match_count = sink.total_matches();
+
+        let result = serde_json::to_string(&total_match_count)?;
+
+        Ok(result)
+    }
+}
+
 impl Collector for CollectorConfig {
     fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
         match self {
@@ -140,6 +225,10 @@ impl Collector for CollectorConfig {
             CollectorConfig::TotalLoc => TotalLoc {}.collect(repo),
             CollectorConfig::TotalDiffStat => TotalDiffStat {}.collect(repo),
             CollectorConfig::TotalCargoDeps => TotalCargoDependencies {}.collect(repo),
+            CollectorConfig::TotalPatternOccurences { pattern } => TotalPatternOccurences {
+                pattern: pattern.clone(),
+            }
+            .collect(repo),
         }
     }
 }
