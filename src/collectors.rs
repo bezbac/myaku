@@ -68,7 +68,7 @@ struct CargoTomlPackage {
 
 #[derive(Deserialize, Debug)]
 struct CargoToml {
-    package: CargoTomlPackage,
+    package: Option<CargoTomlPackage>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
@@ -108,7 +108,9 @@ impl Collector for TotalCargoDependencies {
 
                     let cargo_toml: CargoToml = toml::from_str(&contents)?;
 
-                    crates_in_repo.insert(cargo_toml.package);
+                    if let Some(package) = cargo_toml.package {
+                        crates_in_repo.insert(package);
+                    }
                 }
 
                 if path.ends_with("Cargo.lock") {
