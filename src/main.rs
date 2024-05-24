@@ -97,7 +97,8 @@ fn main() -> Result<ExitCode> {
             let repository_name = util::get_repository_name_from_url(&config.reference.url);
             info!("Collecting metrics for {repository_name}");
 
-            let reference_dir = PathBuf::from_str("./reference")?;
+            let reference_dir =
+                PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?;
 
             fs::create_dir_all(&reference_dir)?;
 
