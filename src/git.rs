@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use execute::Execute;
-use git2::{DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
+use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
 use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -216,34 +216,14 @@ impl RepositoryHandle {
 
     pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
         let git2_repo: Repository = self.into();
-
-        // TODO: Does this work for the first commit in a repo?
-        let t1 = tree_to_treeish(&git2_repo, Some(&"HEAD^".to_string()))?;
-        let t2 = tree_to_treeish(&git2_repo, Some(&"HEAD".to_string()))?;
-
-        let diff = git2_repo.diff_tree_to_tree(
-            t1.unwrap().as_tree(),
-            t2.unwrap().as_tree(),
-            Some(&mut DiffOptions::new()),
-        )?;
-
+        let diff = get_current_diff_to_parent(&git2_repo)?;
         let stats = diff.stats()?;
-
         Ok((stats.files_changed(), stats.insertions(), stats.deletions()))
     }
 
-    pub fn get_changed_file_paths(&self) -> Result<HashSet<String>> {
+    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>> {
         let git2_repo: Repository = self.into();
-
-        // TODO: Does this work for the first commit in a repo?
-        let t1 = tree_to_treeish(&git2_repo, Some(&"HEAD^".to_string()))?;
-        let t2 = tree_to_treeish(&git2_repo, Some(&"HEAD".to_string()))?;
-
-        let diff = git2_repo.diff_tree_to_tree(
-            t1.unwrap().as_tree(),
-            t2.unwrap().as_tree(),
-            Some(&mut DiffOptions::new()),
-        )?;
+        let diff = get_current_diff_to_parent(&git2_repo)?;
 
         let mut diff_lines = Vec::new();
         diff.print(DiffFormat::NameOnly, |_, _, l| {
@@ -258,6 +238,24 @@ impl RepositoryHandle {
 
         Ok(changed_files)
     }
+}
+
+fn get_current_diff_to_parent<'r>(repo: &'r Repository) -> Result<Diff<'r>> {
+    // To diff the first commit in a repository, we need something to diff it against other than it's parent
+    // This object is the empty tree. See https://stackoverflow.com/a/40884093 for more details.
+    let empty_tree = repo.find_tree(Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?)?;
+
+    let t1 = tree_to_treeish(&repo, Some(&"HEAD^".to_string()))
+        .unwrap_or(Some(empty_tree.into_object()));
+    let t2 = tree_to_treeish(&repo, Some(&"HEAD".to_string()))?;
+
+    let diff = repo.diff_tree_to_tree(
+        t1.unwrap().as_tree(),
+        t2.unwrap().as_tree(),
+        Some(&mut DiffOptions::new()),
+    )?;
+
+    return Ok(diff);
 }
 
 fn tree_to_treeish<'a>(

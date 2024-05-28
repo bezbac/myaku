@@ -50,8 +50,7 @@ struct TotalDiffStat;
 
 impl Collector for TotalDiffStat {
     fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
-        let (files_changed, insertions, deletions) =
-            repo.get_current_total_diff_stat().unwrap_or((0, 0, 0));
+        let (files_changed, insertions, deletions) = repo.get_current_total_diff_stat().unwrap();
 
         let result = serde_json::to_string(&(files_changed, insertions, deletions))?;
         Ok(result)
@@ -193,14 +192,7 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
 // This collector assumes it's run per commit and in order. If it isn't, it will return false data!
 impl Collector for TotalPatternOccurences {
     fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
-        let files_changed_in_current_commit = repo.get_changed_file_paths();
-
-        if let Err(_) = files_changed_in_current_commit {
-            // FIXME: This shouldn't happen
-            return Ok(String::from("0"));
-        }
-
-        let files_changed_in_current_commit = files_changed_in_current_commit?;
+        let files_changed_in_current_commit = repo.get_current_changed_file_paths()?;
 
         let mut searcher = SearcherBuilder::new().line_number(true).build();
         let matcher = RegexMatcher::new(&self.pattern)?;
