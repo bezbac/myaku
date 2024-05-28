@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -227,12 +228,18 @@ fn main() -> Result<ExitCode> {
 
             pb.set_message("Initializing");
 
+            let collectors: HashMap<String, Box<dyn Collector>> = config
+                .metrics
+                .into_iter()
+                .map(|(metric_name, metric_config)| (metric_name, metric_config.collector.into()))
+                .collect();
+
             for commit_info in &commits {
                 let refname = &commit_info.id;
 
                 repo.reset_hard(&refname.0)?;
 
-                for (metric_name, metric) in &config.metrics {
+                for (metric_name, collector) in &collectors {
                     if disable_cache == &false {
                         let cached = output.get_metric(metric_name, refname)?;
 
@@ -243,7 +250,7 @@ fn main() -> Result<ExitCode> {
                         }
                     }
 
-                    let metric_value = metric.collector.collect(&repo)?;
+                    let metric_value = collector.collect(&repo)?;
 
                     output.set_metric(metric_name, refname, &metric_value.to_string())?;
 
@@ -262,7 +269,7 @@ fn main() -> Result<ExitCode> {
             info!(
                 "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                 new_metric_count + reused_metric_count,
-                config.metrics.len(),
+                collectors.len(),
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )

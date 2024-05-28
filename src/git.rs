@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use execute::Execute;
-use git2::{DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
+use git2::{DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
 use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -215,19 +215,6 @@ impl RepositoryHandle {
     }
 
     pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
-        fn tree_to_treeish<'a>(
-            repo: &'a Repository,
-            arg: Option<&String>,
-        ) -> Result<Option<Object<'a>>, git2::Error> {
-            let arg = match arg {
-                Some(s) => s,
-                None => return Ok(None),
-            };
-            let obj = repo.revparse_single(arg)?;
-            let tree = obj.peel(ObjectType::Tree)?;
-            Ok(Some(tree))
-        }
-
         let git2_repo: Repository = self.into();
 
         // TODO: Does this work for the first commit in a repo?
@@ -244,6 +231,46 @@ impl RepositoryHandle {
 
         Ok((stats.files_changed(), stats.insertions(), stats.deletions()))
     }
+
+    pub fn get_changed_file_paths(&self) -> Result<HashSet<String>> {
+        let git2_repo: Repository = self.into();
+
+        // TODO: Does this work for the first commit in a repo?
+        let t1 = tree_to_treeish(&git2_repo, Some(&"HEAD^".to_string()))?;
+        let t2 = tree_to_treeish(&git2_repo, Some(&"HEAD".to_string()))?;
+
+        let diff = git2_repo.diff_tree_to_tree(
+            t1.unwrap().as_tree(),
+            t2.unwrap().as_tree(),
+            Some(&mut DiffOptions::new()),
+        )?;
+
+        let mut diff_lines = Vec::new();
+        diff.print(DiffFormat::NameOnly, |_, _, l| {
+            diff_lines.push(l.content().to_vec());
+            true
+        })?;
+
+        let mut changed_files: HashSet<String> = HashSet::new();
+        for l in diff_lines {
+            changed_files.insert(String::from_utf8(l)?.trim_end().to_string());
+        }
+
+        Ok(changed_files)
+    }
+}
+
+fn tree_to_treeish<'a>(
+    repo: &'a Repository,
+    arg: Option<&String>,
+) -> Result<Option<Object<'a>>, git2::Error> {
+    let arg = match arg {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let obj = repo.revparse_single(arg)?;
+    let tree = obj.peel(ObjectType::Tree)?;
+    Ok(Some(tree))
 }
 
 #[derive(PartialEq, Debug)]

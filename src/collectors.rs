@@ -1,15 +1,13 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, BufWriter, Read},
+    sync::RwLock,
 };
 
 use anyhow::Result;
 use cargo_lock::Lockfile;
-use grep::{
-    regex::RegexMatcher,
-    searcher::{SearcherBuilder, Sink, SinkError},
-};
+use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
 use serde::Deserialize;
 use tokei::{LanguageType, Languages};
 use walkdir::WalkDir;
@@ -139,98 +137,167 @@ impl Collector for TotalCargoDependencies {
     }
 }
 
-struct SimpleGrepSinkMatch {}
-
-struct SimpleGrepSink {
-    matches: Vec<SimpleGrepSinkMatch>,
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+struct PartialGrepText {
+    pub text: String,
 }
 
-impl SimpleGrepSink {
-    pub fn new() -> Self {
-        Self {
-            matches: Vec::new(),
-        }
-    }
-
-    pub fn total_matches(&self) -> usize {
-        return self.matches.len();
-    }
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+struct PartialMatchDataSubmatch {
+    pub start: usize,
+    pub end: usize,
+    #[serde(rename = "match")]
+    pub mtch: PartialGrepText,
 }
 
-#[derive(Debug)]
-struct SimpleGrepSinkError {
-    message: String,
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+struct PartialMatchData {
+    pub path: PartialGrepText,
+    pub line_number: usize,
+    pub absolute_offset: usize,
+    pub submatches: Vec<PartialMatchDataSubmatch>,
 }
 
-impl std::fmt::Display for SimpleGrepSinkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for SimpleGrepSinkError {}
-
-impl SinkError for SimpleGrepSinkError {
-    fn error_message<T: std::fmt::Display>(message: T) -> Self {
-        Self {
-            message: message.to_string(),
-        }
-    }
-}
-
-impl Sink for &mut SimpleGrepSink {
-    type Error = SimpleGrepSinkError;
-
-    fn matched(
-        &mut self,
-        _searcher: &grep::searcher::Searcher,
-        _mat: &grep::searcher::SinkMatch<'_>,
-    ) -> std::prelude::v1::Result<bool, Self::Error> {
-        self.matches.push(SimpleGrepSinkMatch {});
-        Ok(true)
-    }
+#[derive(Hash, PartialEq, Eq, Debug, Deserialize)]
+#[serde(tag = "type")]
+enum PartialGrepJSONLine {
+    #[serde(rename = "match")]
+    Match { data: PartialMatchData },
 }
 
 struct TotalPatternOccurences {
     pattern: String,
+
+    cache: RwLock<Option<HashSet<PartialMatchData>>>,
 }
 
+fn get_matches_from_grep_output(output: &str) -> HashSet<PartialMatchData> {
+    output
+        .lines()
+        .filter_map(|l| serde_json::from_str::<PartialGrepJSONLine>(l).ok())
+        .map(|l| match l {
+            PartialGrepJSONLine::Match { data } => data,
+        })
+        .collect()
+}
+
+fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<PartialMatchData>> {
+    let bytes = sink.into_inner().into_inner()?;
+    let ripgrep_output = String::from_utf8(bytes)?;
+
+    let matches = get_matches_from_grep_output(&ripgrep_output);
+
+    Ok(matches)
+}
+
+// This collector assumes it's run per commit and in order. If it isn't, it will return false data!
 impl Collector for TotalPatternOccurences {
     fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
-        let matcher = RegexMatcher::new(&self.pattern)?;
-        let mut searcher = SearcherBuilder::new().line_number(true).build();
+        let files_changed_in_current_commit = repo.get_changed_file_paths();
 
-        let mut sink = SimpleGrepSink::new();
-
-        for entry in WalkDir::new(&repo.path).into_iter() {
-            let entry = entry?;
-
-            if !entry.file_type().is_file() {
-                continue;
-            }
-
-            searcher.search_path(&matcher, entry.path(), &mut sink)?;
+        if let Err(_) = files_changed_in_current_commit {
+            // FIXME: This shouldn't happen
+            return Ok(String::from("0"));
         }
 
-        let total_match_count = sink.total_matches();
+        let files_changed_in_current_commit = files_changed_in_current_commit?;
 
-        let result = serde_json::to_string(&total_match_count)?;
+        let mut searcher = SearcherBuilder::new().line_number(true).build();
+        let matcher = RegexMatcher::new(&self.pattern)?;
 
-        Ok(result)
+        let buffer = BufWriter::new(Vec::new());
+        let mut sink = JSON::new(buffer);
+
+        let cache = self.cache.read().unwrap().clone();
+
+        if let Some(cache) = cache {
+            for changed_file_relative_path in &files_changed_in_current_commit {
+                let changed_file_absolute_path = repo.path.join(&changed_file_relative_path);
+
+                if !changed_file_absolute_path.exists() {
+                    // File was removed in the current commit
+                    // TODO: Already get this information from git to be more certain
+                    continue;
+                }
+
+                let sink = sink.sink_with_path(&matcher, &changed_file_relative_path);
+                searcher.search_path(&matcher, &changed_file_absolute_path, sink)?;
+            }
+
+            let matches = get_matches_from_sink(sink)?;
+
+            let filtered_cached_matches: HashSet<PartialMatchData> = cache
+                .iter()
+                .filter(|m| !files_changed_in_current_commit.contains(&m.path.text))
+                .cloned()
+                .collect();
+
+            let combined_matches: HashSet<PartialMatchData> =
+                filtered_cached_matches.union(&matches).cloned().collect();
+
+            let total_match_count = combined_matches.len();
+
+            let mut cache_lock = self.cache.write().unwrap();
+            *cache_lock = Some(combined_matches);
+
+            let result = serde_json::to_string(&total_match_count)?;
+
+            Ok(result)
+        } else {
+            let root_path = &repo.path.canonicalize()?;
+
+            for entry in WalkDir::new(&root_path).into_iter().filter_entry(|e| {
+                // Skip .git directory
+                let is_dot_git_dir = e
+                    .file_name()
+                    .to_str()
+                    .map(|s| s.starts_with(".git"))
+                    .unwrap_or(false);
+
+                !is_dot_git_dir
+            }) {
+                let entry = entry?;
+
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+
+                let path = entry.path();
+                let path_relative_to_root = path.canonicalize()?;
+                let path_relative_to_root = path_relative_to_root.strip_prefix(root_path)?;
+
+                let mut sink = sink.sink_with_path(&matcher, path_relative_to_root);
+                searcher.search_path(&matcher, entry.path(), &mut sink)?;
+            }
+
+            let matches = get_matches_from_sink(sink)?;
+
+            let total_match_count = matches.len();
+
+            // Update the cache
+            let mut cache_lock = self.cache.write().unwrap();
+            *cache_lock = Some(matches);
+
+            let result = serde_json::to_string(&total_match_count)?;
+
+            Ok(result)
+        }
     }
 }
 
-impl Collector for CollectorConfig {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
-        match self {
-            CollectorConfig::Loc => Loc {}.collect(repo),
-            CollectorConfig::TotalLoc => TotalLoc {}.collect(repo),
-            CollectorConfig::TotalDiffStat => TotalDiffStat {}.collect(repo),
-            CollectorConfig::TotalCargoDeps => TotalCargoDependencies {}.collect(repo),
-            CollectorConfig::TotalPatternOccurences { pattern } => TotalPatternOccurences {
-                pattern: pattern.clone(),
+impl From<CollectorConfig> for Box<dyn Collector> {
+    fn from(value: CollectorConfig) -> Self {
+        match value {
+            CollectorConfig::Loc => Box::new(Loc {}),
+            CollectorConfig::TotalLoc => Box::new(TotalLoc {}),
+            CollectorConfig::TotalDiffStat => Box::new(TotalDiffStat {}),
+            CollectorConfig::TotalCargoDeps => Box::new(TotalCargoDependencies {}),
+            CollectorConfig::TotalPatternOccurences { pattern } => {
+                Box::new(TotalPatternOccurences {
+                    pattern: pattern.clone(),
+                    cache: RwLock::new(None),
+                })
             }
-            .collect(repo),
         }
     }
 }
