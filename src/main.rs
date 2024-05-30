@@ -8,11 +8,10 @@ use std::time::Duration;
 
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
-use console::colors_enabled;
-use env_logger::fmt::Color;
+use console::{colors_enabled, style, Term};
 use env_logger::Env;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, info};
+use log::debug;
 
 use crate::collectors::Collector;
 use crate::config::Config;
@@ -38,6 +37,8 @@ struct Cli {
     no_color: bool,
 }
 
+// TODO: Add debug / verbosity flag
+
 #[derive(Subcommand)]
 enum Commands {
     /// Collect metrics
@@ -56,29 +57,19 @@ enum Commands {
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
+    let term = Term::stdout();
+
     env_logger::Builder::from_env(
-        Env::default().default_filter_or("info,tokei::language::language_type=off"),
-    )
-    .format(move |buf, record| {
-        let mut style = buf.style();
+        Env::default().default_filter_or("warn,tokei::language::language_type=off"),
+    );
 
-        if colors_enabled() && !cli.no_color {
-            if record.level() == log::Level::Warn {
-                style.set_color(Color::Yellow).set_bold(true);
-            }
-
-            if record.level() == log::Level::Error {
-                style.set_color(Color::Red).set_bold(true);
-            }
-
-            if record.level() == log::Level::Debug {
-                style.set_color(Color::Ansi256(240));
-            }
+    let write_err = |str: &str| {
+        if !colors_enabled() {
+            return writeln!(&term, "{str}");
         }
 
-        writeln!(buf, "{}", style.value(record.args()))
-    })
-    .init();
+        writeln!(&term, "{}", style(format!("{str}")).red().bold())
+    };
 
     match &cli.command {
         Some(Commands::Collect {
@@ -88,15 +79,23 @@ fn main() -> Result<ExitCode> {
         }) => {
             let config = Config::from_file(config_path)?;
 
-            info!("Loaded config from {}", config_path.display());
+            writeln!(
+                &term,
+                "Loaded config from {}",
+                style(&config_path.display()).underlined()
+            )?;
 
             if config.metrics.len() == 0 {
-                error!("No metrics configured, please add some to your config file");
+                write_err("No metrics configured, please add some to your config file")?;
                 return Ok(ExitCode::from(1));
             }
 
             let repository_name = util::get_repository_name_from_url(&config.reference.url);
-            info!("Collecting metrics for {repository_name}");
+            writeln!(
+                &term,
+                "Collecting metrics for {}",
+                style(&repository_name).underlined()
+            )?;
 
             let reference_dir =
                 PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?;
@@ -105,26 +104,30 @@ fn main() -> Result<ExitCode> {
 
             let repo = match RepositoryHandle::open(&reference_dir) {
                 Result::Ok(repo) => {
-                    info!("Repository already exists in reference directory");
+                    writeln!(&term, "Repository already exists in reference directory")?;
 
                     let remote_url = repo.remote_url()?;
                     if remote_url != config.reference.url {
-                        error!("Repository URL in reference directory does not match the one in the config file");
+                        write_err("Repository URL in reference directory does not match the one in the config file")?;
                         return Ok(ExitCode::from(1));
                     }
 
+                    writeln!(&term, "Refreshing repository")?;
+
                     repo.fetch()?;
 
-                    info!("Repository refreshed successfully");
+                    term.clear_last_lines(1)?;
+                    writeln!(&term, "Refreshed repository successfully")?;
 
                     repo
                 }
                 // TODO: Check for specific error
                 Result::Err(_) => {
-                    info!(
+                    writeln!(
+                        &term,
                         "Cloning repository {repository_name} into {}",
                         &reference_dir.display()
-                    );
+                    )?;
 
                     let pb = ProgressBar::new(1000);
                     let style = ProgressStyle::with_template(
@@ -182,7 +185,12 @@ fn main() -> Result<ExitCode> {
 
                     pb.finish_and_clear();
 
-                    info!("Successfully cloned repository");
+                    term.clear_last_lines(1)?;
+                    writeln!(
+                        &term,
+                        "Successfully cloned repository into {}",
+                        &reference_dir.display()
+                    )?;
 
                     repo
                 }
@@ -195,25 +203,24 @@ fn main() -> Result<ExitCode> {
 
             repo.reset_hard(&format!("origin/{}", branch))?;
 
-            info!("Collecting commit information");
-
-            let commits = repo.get_all_commits()?;
-
             let output_directory = outut_directory
                 .clone()
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
-
             let mut output = FileOutput::new(&output_directory);
 
+            writeln!(&term, "Collecting commit information")?;
+            let commits = repo.get_all_commits()?;
             output.set_commits(&commits)?;
+            term.clear_last_lines(1)?;
+            writeln!(&term, "Collected commit information")?;
 
-            info!("Collecting tag information");
-
+            writeln!(&term, "Collecting tag information")?;
             let tags = repo.get_all_commit_tags()?;
-
             output.set_commit_tags(&tags)?;
+            term.clear_last_lines(1)?;
+            writeln!(&term, "Collected tag information")?;
 
-            info!("Collecting metrics");
+            writeln!(&term, "Collecting data points")?;
 
             let mut new_metric_count = 0;
             let mut reused_metric_count = 0;
@@ -244,6 +251,7 @@ fn main() -> Result<ExitCode> {
                         let cached = output.get_metric(metric_name, refname)?;
 
                         if let Some(_) = cached {
+                            // TODO: Find better solution for debug logs
                             debug!("Found data from previous run for metric {metric_name} and commit {refname}, skipping collection");
                             reused_metric_count += 1;
                             continue;
@@ -266,13 +274,15 @@ fn main() -> Result<ExitCode> {
 
             pb.finish_and_clear();
 
-            info!(
+            term.clear_last_lines(1)?;
+            writeln!(
+                &term,
                 "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                 new_metric_count + reused_metric_count,
                 collectors.len(),
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
-            )
+            )?;
         }
         None => {}
     }
