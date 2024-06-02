@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -12,16 +12,19 @@ use console::{colors_enabled, style, Term};
 use env_logger::Env;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::Walker;
 
-use crate::collectors::Collector;
 use crate::config::Config;
 use crate::git::RepositoryHandle;
 use crate::git::{clone_repository, CloneProgress};
+use crate::graph::build_collection_execution_graph;
 use crate::output::{FileOutput, Output};
 
 mod collectors;
 mod config;
 mod git;
+mod graph;
 mod output;
 mod util;
 
@@ -222,54 +225,51 @@ fn main() -> Result<ExitCode> {
 
             writeln!(&term, "Collecting data points")?;
 
-            let mut new_metric_count = 0;
-            let mut reused_metric_count = 0;
-
-            let pb = ProgressBar::new((commits.len() * config.metrics.len()) as u64);
+            let pb = ProgressBar::new(1);
             let style =
                 ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
                     .unwrap()
                     .progress_chars("#>-");
             pb.set_style(style);
             pb.enable_steady_tick(Duration::from_millis(100));
+            pb.set_message("Building execution graph");
 
-            pb.set_message("Initializing");
+            let mut storage: HashMap<NodeIndex, String> = HashMap::new();
+            let collection_execution_graph =
+                build_collection_execution_graph(&mut storage, &config.metrics, &commits, &output)?;
 
-            let collectors: HashMap<String, Box<dyn Collector>> = config
-                .metrics
-                .into_iter()
-                .map(|(metric_name, metric_config)| (metric_name, metric_config.collector.into()))
-                .collect();
+            let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
 
-            for commit_info in &commits {
-                let refname = &commit_info.id;
+            pb.set_length(collection_execution_graph.graph.node_count().try_into()?);
 
-                repo.reset_hard(&refname.0)?;
+            let mut new_metric_count = 0;
+            let mut reused_metric_count = 0;
 
-                for (metric_name, collector) in &collectors {
-                    if disable_cache == &false {
-                        let cached = output.get_metric(metric_name, refname)?;
+            for nx in visitor.iter(&collection_execution_graph.graph) {
+                let task = &collection_execution_graph.graph[nx];
 
-                        if let Some(_) = cached {
-                            // TODO: Find better solution for debug logs
-                            debug!("Found data from previous run for metric {metric_name} and commit {refname}, skipping collection");
-                            reused_metric_count += 1;
-                            continue;
-                        }
-                    }
+                if task.was_cached && disable_cache == &false {
+                    // TODO: Find better solution for debug logs
+                    debug!("Found data from previous run for metric {} and commit {}, skipping collection", task.metric_name, task.commit_hash);
+                    reused_metric_count += 1;
+                    continue;
+                } else {
+                    repo.reset_hard(&task.commit_hash.0)?;
 
-                    let metric_value = collector.collect(&repo)?;
+                    let value = collection_execution_graph.run_task(&mut storage, &nx, &repo)?;
+                    storage.insert(nx, value.clone());
 
-                    output.set_metric(metric_name, refname, &metric_value.to_string())?;
+                    output.set_metric(&task.metric_name, &task.commit_hash, &value)?;
 
                     new_metric_count += 1;
-                    pb.inc(1);
-                    pb.set_message(format!(
-                        "{} collected ({} reused)",
-                        new_metric_count + reused_metric_count,
-                        reused_metric_count
-                    ));
                 }
+
+                pb.inc(1);
+                pb.set_message(format!(
+                    "{} collected ({} reused)",
+                    new_metric_count + reused_metric_count,
+                    reused_metric_count
+                ));
             }
 
             pb.finish_and_clear();
@@ -279,7 +279,7 @@ fn main() -> Result<ExitCode> {
                 &term,
                 "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                 new_metric_count + reused_metric_count,
-                collectors.len(),
+                config.metrics.len(),
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )?;

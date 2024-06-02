@@ -19,7 +19,7 @@ pub struct Author {
     pub email: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
 pub struct CommitHash(pub String);
 
 impl From<String> for CommitHash {

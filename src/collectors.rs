@@ -1,27 +1,43 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::File,
     io::{BufReader, BufWriter, Read},
-    sync::RwLock,
 };
 
 use anyhow::Result;
 use cargo_lock::Lockfile;
 use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
-use serde::Deserialize;
+use petgraph::graph::{EdgeIndex, NodeIndex};
+use serde::{Deserialize, Serialize};
 use tokei::{LanguageType, Languages};
 use walkdir::WalkDir;
 
-use crate::{config::CollectorConfig, git::RepositoryHandle};
+use crate::{
+    config::CollectorConfig,
+    git::RepositoryHandle,
+    graph::{CollectionExecutionGraph, CollectionGraphEdge, CollectionTask},
+};
 
 pub trait Collector {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String>;
+    fn collect(
+        &self,
+        storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
+    ) -> Result<String>;
 }
 
 struct TotalLoc;
 
 impl Collector for TotalLoc {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+    fn collect(
+        &self,
+        _storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        _graph: &CollectionExecutionGraph,
+        _current_node_idx: &NodeIndex,
+    ) -> Result<String> {
         let mut languages = Languages::new();
         languages.get_statistics(&[&repo.path], &[".git"], &tokei::Config::default());
         let value = languages.total().code;
@@ -33,7 +49,13 @@ impl Collector for TotalLoc {
 struct Loc;
 
 impl Collector for Loc {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+    fn collect(
+        &self,
+        _storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        _graph: &CollectionExecutionGraph,
+        _current_node_idx: &NodeIndex,
+    ) -> Result<String> {
         let mut languages = Languages::new();
         languages.get_statistics(&[&repo.path], &[".git"], &tokei::Config::default());
         let value: BTreeMap<&LanguageType, usize> = languages
@@ -49,7 +71,13 @@ impl Collector for Loc {
 struct TotalDiffStat;
 
 impl Collector for TotalDiffStat {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+    fn collect(
+        &self,
+        _storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        _graph: &CollectionExecutionGraph,
+        _current_node_idx: &NodeIndex,
+    ) -> Result<String> {
         let (files_changed, insertions, deletions) = repo.get_current_total_diff_stat().unwrap();
 
         let result = serde_json::to_string(&(files_changed, insertions, deletions))?;
@@ -85,7 +113,13 @@ impl std::hash::Hash for CargoLockPackage {
 struct TotalCargoDependencies;
 
 impl Collector for TotalCargoDependencies {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+    fn collect(
+        &self,
+        _storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        _graph: &CollectionExecutionGraph,
+        _current_node_idx: &NodeIndex,
+    ) -> Result<String> {
         let mut crates_in_repo: HashSet<CargoTomlPackage> = HashSet::new();
         let mut dependencies: HashSet<CargoLockPackage> = HashSet::new();
 
@@ -136,12 +170,12 @@ impl Collector for TotalCargoDependencies {
     }
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct PartialGrepText {
     pub text: String,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct PartialMatchDataSubmatch {
     pub start: usize,
     pub end: usize,
@@ -149,7 +183,7 @@ struct PartialMatchDataSubmatch {
     pub mtch: PartialGrepText,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Deserialize)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 struct PartialMatchData {
     pub path: PartialGrepText,
     pub line_number: usize,
@@ -164,10 +198,8 @@ enum PartialGrepJSONLine {
     Match { data: PartialMatchData },
 }
 
-struct TotalPatternOccurences {
+struct PatternOccurences {
     pattern: String,
-
-    cache: RwLock<Option<HashSet<PartialMatchData>>>,
 }
 
 fn get_matches_from_grep_output(output: &str) -> HashSet<PartialMatchData> {
@@ -189,9 +221,87 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
     Ok(matches)
 }
 
-// This collector assumes it's run per commit and in order. If it isn't, it will return false data!
-impl Collector for TotalPatternOccurences {
-    fn collect(&self, repo: &RepositoryHandle) -> Result<String> {
+fn find_incoming_edges<F: Fn(&CollectionGraphEdge) -> bool>(
+    graph: &CollectionExecutionGraph,
+    current_node_idx: &NodeIndex,
+    predicate: F,
+) -> Vec<EdgeIndex> {
+    let mut edge_walker = graph
+        .graph
+        .neighbors_directed(current_node_idx.clone(), petgraph::Direction::Incoming)
+        .detach();
+
+    let mut result = Vec::new();
+
+    while let Some(edge_idx) = edge_walker.next_edge(&graph.graph) {
+        let edge = &graph.graph[edge_idx];
+
+        if predicate(edge) {
+            result.push(edge_idx);
+        }
+    }
+
+    result
+}
+
+fn find_preceding_node<EP: Fn(&CollectionGraphEdge) -> bool, NP: Fn(&CollectionTask) -> bool>(
+    graph: &CollectionExecutionGraph,
+    current_node_idx: &NodeIndex,
+    edge_predicate: EP,
+    node_predicate: NP,
+) -> Option<NodeIndex> {
+    let incoming_edges_matching_predicate =
+        find_incoming_edges(graph, current_node_idx, edge_predicate);
+
+    for edge_idx in incoming_edges_matching_predicate {
+        let endpoints = graph.graph.edge_endpoints(edge_idx);
+
+        if !endpoints.is_some() {
+            continue;
+        }
+
+        let source_node_idx = endpoints.unwrap().0;
+        let source_node = &graph.graph[source_node_idx];
+
+        if node_predicate(source_node) {
+            return Some(source_node_idx);
+        }
+    }
+
+    None
+}
+
+fn get_previous_commit_value_of_collector(
+    storage: &HashMap<NodeIndex, String>,
+    graph: &CollectionExecutionGraph,
+    current_node_idx: &NodeIndex,
+) -> Option<String> {
+    let current_node = &graph.graph[*current_node_idx];
+
+    let previous_node_index = find_preceding_node(
+        graph,
+        current_node_idx,
+        |e| e.distance == 1,
+        |n| n.collector_config == current_node.collector_config,
+    );
+
+    if previous_node_index.is_none() {
+        return None;
+    }
+
+    let previous_node_index = previous_node_index.unwrap();
+
+    storage.get(&previous_node_index).cloned()
+}
+
+impl Collector for PatternOccurences {
+    fn collect(
+        &self,
+        storage: &HashMap<NodeIndex, String>,
+        repo: &RepositoryHandle,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
+    ) -> Result<String> {
         let files_changed_in_current_commit = repo.get_current_changed_file_paths()?;
 
         let mut searcher = SearcherBuilder::new().line_number(true).build();
@@ -200,9 +310,10 @@ impl Collector for TotalPatternOccurences {
         let buffer = BufWriter::new(Vec::new());
         let mut sink = JSON::new(buffer);
 
-        let cache = self.cache.read().unwrap().clone();
+        let previous_commit_value =
+            get_previous_commit_value_of_collector(storage, graph, current_node_idx);
 
-        if let Some(cache) = cache {
+        if let Some(previous_commit_value) = previous_commit_value {
             for changed_file_relative_path in &files_changed_in_current_commit {
                 let changed_file_absolute_path = repo.path.join(&changed_file_relative_path);
 
@@ -218,7 +329,10 @@ impl Collector for TotalPatternOccurences {
 
             let matches = get_matches_from_sink(sink)?;
 
-            let filtered_cached_matches: HashSet<PartialMatchData> = cache
+            let previous_commit_matches: HashSet<PartialMatchData> =
+                serde_json::from_str(&previous_commit_value)?;
+
+            let filtered_cached_matches: HashSet<PartialMatchData> = previous_commit_matches
                 .iter()
                 .filter(|m| !files_changed_in_current_commit.contains(&m.path.text))
                 .cloned()
@@ -227,12 +341,7 @@ impl Collector for TotalPatternOccurences {
             let combined_matches: HashSet<PartialMatchData> =
                 filtered_cached_matches.union(&matches).cloned().collect();
 
-            let total_match_count = combined_matches.len();
-
-            let mut cache_lock = self.cache.write().unwrap();
-            *cache_lock = Some(combined_matches);
-
-            let result = serde_json::to_string(&total_match_count)?;
+            let result = serde_json::to_string(&combined_matches)?;
 
             Ok(result)
         } else {
@@ -264,30 +373,74 @@ impl Collector for TotalPatternOccurences {
 
             let matches = get_matches_from_sink(sink)?;
 
-            let total_match_count = matches.len();
-
-            // Update the cache
-            let mut cache_lock = self.cache.write().unwrap();
-            *cache_lock = Some(matches);
-
-            let result = serde_json::to_string(&total_match_count)?;
+            let result = serde_json::to_string(&matches)?;
 
             Ok(result)
         }
     }
 }
 
-impl From<CollectorConfig> for Box<dyn Collector> {
-    fn from(value: CollectorConfig) -> Self {
+struct TotalPatternOccurences {
+    pattern: String,
+}
+
+impl Collector for TotalPatternOccurences {
+    fn collect(
+        &self,
+        storage: &HashMap<NodeIndex, String>,
+        _repo: &RepositoryHandle,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
+    ) -> Result<String> {
+        let pattern_occurences_task_idx = find_preceding_node(
+            graph,
+            current_node_idx,
+            |e| e.distance == 0,
+            |n| {
+                n.collector_config
+                    == CollectorConfig::PatternOccurences {
+                        pattern: self.pattern.clone(),
+                    }
+            },
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "Could not find required dependency task for node {:?}",
+                current_node_idx
+            )
+        });
+
+        let pattern_occurences_value =
+            storage.get(&pattern_occurences_task_idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not read required value from storage for node {:?}",
+                    pattern_occurences_task_idx
+                )
+            })?;
+
+        let matches: HashSet<PartialMatchData> = serde_json::from_str(&pattern_occurences_value)?;
+
+        let total_matches = matches.len();
+
+        let result = serde_json::to_string(&total_matches)?;
+
+        return Ok(result);
+    }
+}
+
+impl From<&CollectorConfig> for Box<dyn Collector> {
+    fn from(value: &CollectorConfig) -> Self {
         match value {
             CollectorConfig::Loc => Box::new(Loc {}),
             CollectorConfig::TotalLoc => Box::new(TotalLoc {}),
             CollectorConfig::TotalDiffStat => Box::new(TotalDiffStat {}),
             CollectorConfig::TotalCargoDeps => Box::new(TotalCargoDependencies {}),
+            CollectorConfig::PatternOccurences { pattern } => Box::new(PatternOccurences {
+                pattern: pattern.clone(),
+            }),
             CollectorConfig::TotalPatternOccurences { pattern } => {
                 Box::new(TotalPatternOccurences {
                     pattern: pattern.clone(),
-                    cache: RwLock::new(None),
                 })
             }
         }

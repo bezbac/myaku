@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "collector")]
 pub enum CollectorConfig {
     #[serde(rename = "total-loc")]
@@ -21,15 +21,17 @@ pub enum CollectorConfig {
     TotalCargoDeps,
     #[serde(rename = "total-pattern-occurences")]
     TotalPatternOccurences { pattern: String },
+    #[serde(rename = "pattern-occurences")]
+    PatternOccurences { pattern: String },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum Frequency {
     PerCommit,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
 pub struct MetricConfig {
     #[serde(flatten)]
     pub collector: CollectorConfig,
