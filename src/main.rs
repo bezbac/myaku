@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
+use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
 use env_logger::Env;
+use git::CommitHash;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
-use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 
 use crate::config::Config;
@@ -234,9 +235,19 @@ fn main() -> Result<ExitCode> {
             pb.enable_steady_tick(Duration::from_millis(100));
             pb.set_message("Building execution graph");
 
-            let mut storage: HashMap<NodeIndex, String> = HashMap::new();
+            let mut storage: HashMap<(CollectorConfig, CommitHash), String> = HashMap::new();
+
+            // Initialize storage from cache
+            for commit in &commits {
+                for (metric_name, metric_config) in &config.metrics {
+                    if let Some(value) = output.get_metric(&metric_name, &commit.id)? {
+                        storage.insert((metric_config.collector.clone(), commit.id.clone()), value);
+                    }
+                }
+            }
+
             let collection_execution_graph =
-                build_collection_execution_graph(&mut storage, &config.metrics, &commits, &output)?;
+                build_collection_execution_graph(&mut storage, &config.metrics, &commits)?;
 
             let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
 
@@ -256,10 +267,7 @@ fn main() -> Result<ExitCode> {
                 } else {
                     repo.reset_hard(&task.commit_hash.0)?;
 
-                    let value = collection_execution_graph.run_task(&mut storage, &nx, &repo)?;
-                    storage.insert(nx, value.clone());
-
-                    output.set_metric(&task.metric_name, &task.commit_hash, &value)?;
+                    collection_execution_graph.run_task(&mut storage, &nx, &repo)?;
 
                     new_metric_count += 1;
                 }
@@ -283,6 +291,22 @@ fn main() -> Result<ExitCode> {
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )?;
+
+            writeln!(&term, "Writing data to output")?;
+            for ((collector, commit), value) in storage {
+                let metric_names = config
+                    .metrics
+                    .iter()
+                    .filter(|(_, metric_config)| metric_config.collector == collector)
+                    .map(|(metric_name, _)| metric_name)
+                    .collect::<Vec<&String>>();
+
+                for metric_name in metric_names {
+                    output.set_metric(&metric_name, &commit, &value)?;
+                }
+            }
+            term.clear_last_lines(1)?;
+            writeln!(&term, "Wrote data to output")?;
         }
         None => {}
     }

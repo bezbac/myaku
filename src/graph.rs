@@ -7,7 +7,6 @@ use crate::{
     collectors::Collector,
     config::{CollectorConfig, Frequency, MetricConfig},
     git::{CommitHash, CommitInfo, RepositoryHandle},
-    output::Output,
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -32,27 +31,31 @@ pub struct CollectionExecutionGraph {
 impl CollectionExecutionGraph {
     pub fn run_task(
         &self,
-        storage: &mut HashMap<NodeIndex, String>,
+        storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
         node_idx: &NodeIndex,
         repo: &RepositoryHandle,
     ) -> Result<String> {
         let task = &self.graph[*node_idx];
         let collector: Box<dyn Collector> = (&task.collector_config).into();
-        collector.collect(storage, repo, self, node_idx)
+        let data = collector.collect(storage, repo, self, node_idx)?;
+        storage.insert(
+            (task.collector_config.clone(), task.commit_hash.clone()),
+            data.clone(),
+        );
+        Ok(data)
     }
 }
 
 pub fn add_task(
     graph: &mut Graph<CollectionTask, CollectionGraphEdge>,
-    storage: &mut HashMap<NodeIndex, String>,
-    output: &dyn Output,
+    storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
     created_tasks: &mut HashMap<(String, MetricConfig, CommitHash), NodeIndex>,
     metric_name: &str,
     metric_config: &MetricConfig,
     current_commit_hash: &CommitHash,
     previous_commit_hash: Option<&CommitHash>,
 ) -> Result<NodeIndex> {
-    let cached = output.get_metric(metric_name, current_commit_hash)?;
+    let cached = storage.get(&(metric_config.collector.clone(), current_commit_hash.clone()));
 
     let was_cached = cached.is_some();
 
@@ -72,17 +75,12 @@ pub fn add_task(
         node_idx,
     );
 
-    if let Some(cached) = cached {
-        storage.insert(node_idx, cached);
-    }
-
     // Create dependency tasks
     match &metric_config.collector {
         CollectorConfig::TotalPatternOccurences { pattern } => {
             let dependency_node_idx = add_task(
                 graph,
                 storage,
-                output,
                 created_tasks,
                 format!("{metric_name}_derived_pattern_occurences").as_str(),
                 &MetricConfig {
@@ -122,10 +120,9 @@ pub fn add_task(
 }
 
 pub fn build_collection_execution_graph(
-    storage: &mut HashMap<NodeIndex, String>,
+    storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
     metrics: &HashMap<String, MetricConfig>,
     commits: &[CommitInfo],
-    output: &dyn Output,
 ) -> Result<CollectionExecutionGraph> {
     let mut graph: Graph<CollectionTask, CollectionGraphEdge> = Graph::new();
 
@@ -146,7 +143,6 @@ pub fn build_collection_execution_graph(
             add_task(
                 &mut graph,
                 storage,
-                output,
                 &mut created_tasks,
                 metric_name,
                 metric_config,

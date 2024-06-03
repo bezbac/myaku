@@ -14,14 +14,14 @@ use walkdir::WalkDir;
 
 use crate::{
     config::CollectorConfig,
-    git::RepositoryHandle,
+    git::{CommitHash, RepositoryHandle},
     graph::{CollectionExecutionGraph, CollectionGraphEdge, CollectionTask},
 };
 
 pub trait Collector {
     fn collect(
         &self,
-        storage: &HashMap<NodeIndex, String>,
+        storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
@@ -33,7 +33,7 @@ struct TotalLoc;
 impl Collector for TotalLoc {
     fn collect(
         &self,
-        _storage: &HashMap<NodeIndex, String>,
+        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
@@ -51,7 +51,7 @@ struct Loc;
 impl Collector for Loc {
     fn collect(
         &self,
-        _storage: &HashMap<NodeIndex, String>,
+        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
@@ -73,7 +73,7 @@ struct TotalDiffStat;
 impl Collector for TotalDiffStat {
     fn collect(
         &self,
-        _storage: &HashMap<NodeIndex, String>,
+        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
@@ -115,7 +115,7 @@ struct TotalCargoDependencies;
 impl Collector for TotalCargoDependencies {
     fn collect(
         &self,
-        _storage: &HashMap<NodeIndex, String>,
+        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
@@ -272,7 +272,7 @@ fn find_preceding_node<EP: Fn(&CollectionGraphEdge) -> bool, NP: Fn(&CollectionT
 }
 
 fn get_previous_commit_value_of_collector(
-    storage: &HashMap<NodeIndex, String>,
+    storage: &HashMap<(CollectorConfig, CommitHash), String>,
     graph: &CollectionExecutionGraph,
     current_node_idx: &NodeIndex,
 ) -> Option<String> {
@@ -291,13 +291,20 @@ fn get_previous_commit_value_of_collector(
 
     let previous_node_index = previous_node_index.unwrap();
 
-    storage.get(&previous_node_index).cloned()
+    let previous_node = &graph.graph[previous_node_index];
+
+    storage
+        .get(&(
+            previous_node.collector_config.clone(),
+            previous_node.commit_hash.clone(),
+        ))
+        .cloned()
 }
 
 impl Collector for PatternOccurences {
     fn collect(
         &self,
-        storage: &HashMap<NodeIndex, String>,
+        storage: &HashMap<(CollectorConfig, CommitHash), String>,
         repo: &RepositoryHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
@@ -387,7 +394,7 @@ struct TotalPatternOccurences {
 impl Collector for TotalPatternOccurences {
     fn collect(
         &self,
-        storage: &HashMap<NodeIndex, String>,
+        storage: &HashMap<(CollectorConfig, CommitHash), String>,
         _repo: &RepositoryHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
@@ -410,8 +417,14 @@ impl Collector for TotalPatternOccurences {
             )
         });
 
-        let pattern_occurences_value =
-            storage.get(&pattern_occurences_task_idx).ok_or_else(|| {
+        let pattern_occurences_task = &graph.graph[pattern_occurences_task_idx];
+
+        let pattern_occurences_value = storage
+            .get(&(
+                pattern_occurences_task.collector_config.clone(),
+                pattern_occurences_task.commit_hash.clone(),
+            ))
+            .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Could not read required value from storage for node {:?}",
                     pattern_occurences_task_idx
