@@ -13,7 +13,6 @@ use crate::{
 pub struct CollectionTask {
     pub metric_name: String,
     pub commit_hash: CommitHash,
-    pub was_cached: bool,
     pub collector_config: CollectorConfig,
 }
 
@@ -48,21 +47,15 @@ impl CollectionExecutionGraph {
 
 pub fn add_task(
     graph: &mut Graph<CollectionTask, CollectionGraphEdge>,
-    storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
     created_tasks: &mut HashMap<(String, MetricConfig, CommitHash), NodeIndex>,
     metric_name: &str,
     metric_config: &MetricConfig,
     current_commit_hash: &CommitHash,
     previous_commit_hash: Option<&CommitHash>,
 ) -> Result<NodeIndex> {
-    let cached = storage.get(&(metric_config.collector.clone(), current_commit_hash.clone()));
-
-    let was_cached = cached.is_some();
-
     let node_idx = graph.add_node(CollectionTask {
         metric_name: metric_name.to_string(),
         commit_hash: current_commit_hash.clone(),
-        was_cached,
         collector_config: metric_config.collector.clone(),
     });
 
@@ -80,7 +73,6 @@ pub fn add_task(
         CollectorConfig::TotalPatternOccurences { pattern } => {
             let dependency_node_idx = add_task(
                 graph,
-                storage,
                 created_tasks,
                 format!("{metric_name}_derived_pattern_occurences").as_str(),
                 &MetricConfig {
@@ -120,7 +112,6 @@ pub fn add_task(
 }
 
 pub fn build_collection_execution_graph(
-    storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
     metrics: &HashMap<String, MetricConfig>,
     commits: &[CommitInfo],
 ) -> Result<CollectionExecutionGraph> {
@@ -142,7 +133,6 @@ pub fn build_collection_execution_graph(
         for (metric_name, metric_config) in metrics {
             add_task(
                 &mut graph,
-                storage,
                 &mut created_tasks,
                 metric_name,
                 metric_config,

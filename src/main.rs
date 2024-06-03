@@ -7,6 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{Ok, Result};
+use cache::Cache;
 use clap::{Parser, Subcommand};
 use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
@@ -22,6 +23,7 @@ use crate::git::{clone_repository, CloneProgress};
 use crate::graph::build_collection_execution_graph;
 use crate::output::{FileOutput, Output};
 
+mod cache;
 mod collectors;
 mod config;
 mod git;
@@ -212,6 +214,9 @@ fn main() -> Result<ExitCode> {
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
             let mut output = FileOutput::new(&output_directory);
 
+            let cache_directory = PathBuf::from(format!(".myaku/cache/{repository_name}"));
+            let cache = cache::FileCache::new(&cache_directory);
+
             writeln!(&term, "Collecting commit information")?;
             let commits = repo.get_all_commits()?;
             output.set_commits(&commits)?;
@@ -237,7 +242,7 @@ fn main() -> Result<ExitCode> {
 
             let mut storage: HashMap<(CollectorConfig, CommitHash), String> = HashMap::new();
 
-            // Initialize storage from cache
+            // Fill storage from cache
             for commit in &commits {
                 for (metric_name, metric_config) in &config.metrics {
                     if let Some(value) = output.get_metric(&metric_name, &commit.id)? {
@@ -247,7 +252,19 @@ fn main() -> Result<ExitCode> {
             }
 
             let collection_execution_graph =
-                build_collection_execution_graph(&mut storage, &config.metrics, &commits)?;
+                build_collection_execution_graph(&config.metrics, &commits)?;
+
+            // Fill storage from cache
+            for nx in collection_execution_graph.graph.node_indices() {
+                let task = &collection_execution_graph.graph[nx];
+
+                if let Some(value) = cache.lookup(&task.collector_config, &task.commit_hash)? {
+                    storage.insert(
+                        (task.collector_config.clone(), task.commit_hash.clone()),
+                        value,
+                    );
+                }
+            }
 
             let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
 
@@ -259,7 +276,9 @@ fn main() -> Result<ExitCode> {
             for nx in visitor.iter(&collection_execution_graph.graph) {
                 let task = &collection_execution_graph.graph[nx];
 
-                if task.was_cached && disable_cache == &false {
+                if storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()))
+                    && disable_cache == &false
+                {
                     // TODO: Find better solution for debug logs
                     debug!("Found data from previous run for metric {} and commit {}, skipping collection", task.metric_name, task.commit_hash);
                     reused_metric_count += 1;
@@ -291,6 +310,19 @@ fn main() -> Result<ExitCode> {
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )?;
+
+            writeln!(&term, "Writing data to cache")?;
+            for nx in collection_execution_graph.graph.node_indices() {
+                let task = &collection_execution_graph.graph[nx];
+
+                if let Some(value) =
+                    storage.get(&(task.collector_config.clone(), task.commit_hash.clone()))
+                {
+                    cache.store(&task.collector_config, &task.commit_hash, value)?;
+                }
+            }
+            term.clear_last_lines(1)?;
+            writeln!(&term, "Wrote data to cache")?;
 
             writeln!(&term, "Writing data to output")?;
             for ((collector, commit), value) in storage {
