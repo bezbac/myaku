@@ -23,6 +23,7 @@ use crate::git::{clone_repository, CloneProgress};
 use crate::graph::build_collection_execution_graph;
 use crate::output::{FileOutput, Output};
 
+// mod _collectors;
 mod cache;
 mod collectors;
 mod config;
