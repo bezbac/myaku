@@ -67,9 +67,35 @@ impl<'a> From<Signature<'a>> for Author {
 const GIT_BINARY_PATH: &str = "git";
 
 #[derive(Debug)]
-pub struct WorktreeHandle {
+pub struct WorktreeHandle<'r> {
+    repo: &'r RepositoryHandle,
     pub name: String,
     pub path: PathBuf,
+}
+
+pub struct TempWorktreeHandle<'r> {
+    worktree: WorktreeHandle<'r>,
+}
+
+impl<'r> Drop for TempWorktreeHandle<'r> {
+    fn drop(&mut self) {
+        self.worktree
+            .repo
+            .remove_worktree(&self.worktree.name, Some(true))
+            .unwrap()
+    }
+}
+
+impl<'r> AsRef<WorktreeHandle<'r>> for TempWorktreeHandle<'r> {
+    fn as_ref(&self) -> &WorktreeHandle<'r> {
+        &self.worktree
+    }
+}
+
+impl<'r> AsMut<WorktreeHandle<'r>> for TempWorktreeHandle<'r> {
+    fn as_mut(&mut self) -> &mut WorktreeHandle<'r> {
+        &mut self.worktree
+    }
 }
 
 #[derive(Debug)]
@@ -236,6 +262,7 @@ impl RepositoryHandle {
         git2_repo.worktree(worktree_name, worktree_path, None)?;
 
         let handle = WorktreeHandle {
+            repo: self,
             name: worktree_name.to_string(),
             path: worktree_path.clone(),
         };
@@ -243,26 +270,53 @@ impl RepositoryHandle {
         Ok(handle)
     }
 
-    pub fn main_worktree(&self) -> Result<WorktreeHandle> {
+    pub fn main_worktree<'r>(&'r self) -> Result<WorktreeHandle<'r>> {
         // TODO: Find the real name here
         let main_worktree_name = String::from("main");
 
         let worktree = WorktreeHandle {
+            repo: self,
             name: main_worktree_name.to_string(),
             path: self.path.clone(),
         };
 
         Ok(worktree)
     }
+
+    pub fn create_temp_worktree(
+        &self,
+        worktree_name: &str,
+        worktree_path: &PathBuf,
+    ) -> Result<TempWorktreeHandle> {
+        let worktree = self.create_worktree(worktree_name, worktree_path)?;
+        Ok(TempWorktreeHandle { worktree })
+    }
+
+    pub fn remove_worktree(&self, worktree_name: &str, force: Option<bool>) -> Result<()> {
+        let mut command = Command::new(GIT_BINARY_PATH);
+        command.current_dir(&self.path);
+        command.arg("worktree");
+        command.arg("remove");
+
+        if let Some(true) = force {
+            command.arg("-f");
+        }
+
+        command.arg(worktree_name);
+
+        command.execute_check_exit_status_code(0)?;
+
+        Ok(())
+    }
 }
 
-impl From<&WorktreeHandle> for Repository {
+impl<'r> From<&WorktreeHandle<'r>> for Repository {
     fn from(value: &WorktreeHandle) -> Self {
         Repository::open(&value.path).unwrap()
     }
 }
 
-impl WorktreeHandle {
+impl<'r> WorktreeHandle<'r> {
     pub fn reset_hard(&self, revstring: &str) -> Result<()> {
         let git2_repo: Repository = self.into();
 
@@ -296,6 +350,10 @@ impl WorktreeHandle {
         }
 
         Ok(changed_files)
+    }
+
+    pub fn remove(self) -> Result<()> {
+        self.repo.remove_worktree(&self.name, Some(false))
     }
 }
 

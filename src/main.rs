@@ -291,7 +291,7 @@ fn main() -> Result<ExitCode> {
                 let id = nanoid!(10, &alphabet);
 
                 let handle = repo
-                    .create_worktree(
+                    .create_temp_worktree(
                         &id,
                         &PathBuf::from(format!(".myaku/worktree/{repository_name}/{id}")),
                     )
@@ -306,11 +306,12 @@ fn main() -> Result<ExitCode> {
             let _: Vec<Result<()>> = node_indices.par_iter().map(|nx| -> Result<()> {
                 let task = &collection_execution_graph.graph[*nx];
 
-                let mut worktree = worktree_pool.try_pull();
-                while worktree.is_none() {
-                    worktree = worktree_pool.try_pull();
+                let mut temp_worktree = worktree_pool.try_pull();
+                while temp_worktree.is_none() {
+                    temp_worktree = worktree_pool.try_pull();
                 }
-                let mut worktree = worktree.unwrap();
+                let mut temp_worktree = temp_worktree.unwrap();
+                let mut worktree = temp_worktree.as_mut();
 
                 let is_in_storage = storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
                 
@@ -348,6 +349,8 @@ fn main() -> Result<ExitCode> {
 
                 Ok(())
             }).collect();
+
+            drop(worktree_pool);
 
             pb.finish_and_clear();
 
