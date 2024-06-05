@@ -1,12 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
+use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use tokei::{LanguageType, Languages};
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -17,8 +18,8 @@ pub(super) struct Loc;
 impl Collector for Loc {
     fn collect(
         &self,
-        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        repo: &RepositoryHandle,
+        _storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
     ) -> Result<String> {

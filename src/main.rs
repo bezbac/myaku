@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::fs::{self};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Ok, Result};
@@ -11,11 +11,16 @@ use cache::Cache;
 use clap::{Parser, Subcommand};
 use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
+use dashmap::DashMap;
 use env_logger::Env;
 use git::CommitHash;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
+use nanoid::nanoid;
+use object_pool::Pool;
+use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
+use rayon::prelude::*;
 
 use crate::config::Config;
 use crate::git::RepositoryHandle;
@@ -241,7 +246,7 @@ fn main() -> Result<ExitCode> {
             pb.enable_steady_tick(Duration::from_millis(100));
             pb.set_message("Building execution graph");
 
-            let mut storage: HashMap<(CollectorConfig, CommitHash), String> = HashMap::new();
+            let storage: DashMap<(CollectorConfig, CommitHash), String> = DashMap::new();
 
             // Fill storage from cache
             for commit in &commits {
@@ -271,36 +276,89 @@ fn main() -> Result<ExitCode> {
 
             pb.set_length(collection_execution_graph.graph.node_count().try_into()?);
 
-            let mut new_metric_count = 0;
-            let mut reused_metric_count = 0;
+            let new_metric_count = Arc::new(Mutex::new(0));
+            let reused_metric_count = Arc::new(Mutex::new(0));
 
-            for nx in visitor.iter(&collection_execution_graph.graph) {
-                let task = &collection_execution_graph.graph[nx];
+            let alphabet: [char; 16] = [
+                '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
+            ];
 
-                if storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()))
-                    && disable_cache == &false
+            fs::create_dir_all(&PathBuf::from(format!(".myaku/worktree/{repository_name}")))?;
+
+            let available_cpus = num_cpus::get();
+
+            let worktree_pool = Arc::new(Pool::new(available_cpus, || {
+                let id = nanoid!(10, &alphabet);
+
+                let handle = repo
+                    .create_worktree(
+                        &id,
+                        &PathBuf::from(format!(".myaku/worktree/{repository_name}/{id}")),
+                    )
+                    .unwrap();
+
+                handle
+            }));
+
+            let node_indices: Vec<NodeIndex> =
+                visitor.iter(&collection_execution_graph.graph).collect();
+
+            let _: Vec<Result<()>> = node_indices.par_iter().map(|nx| -> Result<()> {
+                let task = &collection_execution_graph.graph[*nx];
+
+                let mut worktree = worktree_pool.try_pull();
+                while worktree.is_none() {
+                    worktree = worktree_pool.try_pull();
+                }
+                let mut worktree = worktree.unwrap();
+
+                let is_in_storage = storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
+                
+                if is_in_storage && disable_cache == &false
                 {
                     // TODO: Find better solution for debug logs
                     debug!("Found data from previous run for metric {} and commit {}, skipping collection", task.metric_name, task.commit_hash);
-                    reused_metric_count += 1;
-                    continue;
+                    let mut reused_metric_count_lock = reused_metric_count.lock().unwrap();
+                    *reused_metric_count_lock += 1;
+                    return Ok(());
                 } else {
-                    repo.reset_hard(&task.commit_hash.0)?;
+                    worktree.reset_hard(&task.commit_hash.0)?;
 
-                    collection_execution_graph.run_task(&mut storage, &nx, &repo)?;
+                    let output = collection_execution_graph.run_task(&storage, &nx, &mut worktree)?;
 
-                    new_metric_count += 1;
+                    storage.insert(
+                        (task.collector_config.clone(), task.commit_hash.clone()),
+                        output.clone(),
+                    );
+
+                    let mut new_metric_count_lock = new_metric_count.lock().unwrap();
+
+                    *new_metric_count_lock += 1;
                 }
+
+                let reused_metric_count_lock = reused_metric_count.lock().unwrap();
+                let new_metric_count_lock = new_metric_count.lock().unwrap();
 
                 pb.inc(1);
                 pb.set_message(format!(
                     "{} collected ({} reused)",
-                    new_metric_count + reused_metric_count,
-                    reused_metric_count
+                    *new_metric_count_lock + *reused_metric_count_lock,
+                    *reused_metric_count_lock
                 ));
-            }
+
+                Ok(())
+            }).collect();
 
             pb.finish_and_clear();
+
+            let reused_metric_count = Arc::try_unwrap(reused_metric_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            let new_metric_count = Arc::try_unwrap(new_metric_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
 
             term.clear_last_lines(1)?;
             writeln!(
@@ -319,7 +377,7 @@ fn main() -> Result<ExitCode> {
                 if let Some(value) =
                     storage.get(&(task.collector_config.clone(), task.commit_hash.clone()))
                 {
-                    cache.store(&task.collector_config, &task.commit_hash, value)?;
+                    cache.store(&task.collector_config, &task.commit_hash, &value)?;
                 }
             }
             term.clear_last_lines(1)?;

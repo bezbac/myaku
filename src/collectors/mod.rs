@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 
+use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -21,8 +20,8 @@ mod utils;
 pub trait Collector {
     fn collect(
         &self,
-        storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        repo: &RepositoryHandle,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String>;

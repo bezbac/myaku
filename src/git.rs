@@ -66,6 +66,13 @@ impl<'a> From<Signature<'a>> for Author {
 
 const GIT_BINARY_PATH: &str = "git";
 
+#[derive(Debug)]
+pub struct WorktreeHandle {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug)]
 pub struct RepositoryHandle {
     pub path: PathBuf,
 }
@@ -128,13 +135,8 @@ impl RepositoryHandle {
     }
 
     pub fn reset_hard(&self, revstring: &str) -> Result<()> {
-        let git2_repo: Repository = self.into();
-
-        let (object, _) = git2_repo.revparse_ext(&revstring)?;
-        git2_repo.checkout_tree(&object, None)?;
-        git2_repo.set_head_detached(object.id())?;
-
-        Ok(())
+        let main_worktree = self.main_worktree()?;
+        main_worktree.reset_hard(revstring)
     }
 
     pub fn get_all_commits(&self) -> Result<Vec<CommitInfo>> {
@@ -212,6 +214,63 @@ impl RepositoryHandle {
         }
 
         Ok(tags)
+    }
+
+    pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
+        let main_worktree = self.main_worktree()?;
+        main_worktree.get_current_total_diff_stat()
+    }
+
+    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>> {
+        let main_worktree = self.main_worktree()?;
+        main_worktree.get_current_changed_file_paths()
+    }
+
+    pub fn create_worktree(
+        &self,
+        worktree_name: &str,
+        worktree_path: &PathBuf,
+    ) -> Result<WorktreeHandle> {
+        let git2_repo: Repository = self.into();
+
+        git2_repo.worktree(worktree_name, worktree_path, None)?;
+
+        let handle = WorktreeHandle {
+            name: worktree_name.to_string(),
+            path: worktree_path.clone(),
+        };
+
+        Ok(handle)
+    }
+
+    pub fn main_worktree(&self) -> Result<WorktreeHandle> {
+        // TODO: Find the real name here
+        let main_worktree_name = String::from("main");
+
+        let worktree = WorktreeHandle {
+            name: main_worktree_name.to_string(),
+            path: self.path.clone(),
+        };
+
+        Ok(worktree)
+    }
+}
+
+impl From<&WorktreeHandle> for Repository {
+    fn from(value: &WorktreeHandle) -> Self {
+        Repository::open(&value.path).unwrap()
+    }
+}
+
+impl WorktreeHandle {
+    pub fn reset_hard(&self, revstring: &str) -> Result<()> {
+        let git2_repo: Repository = self.into();
+
+        let (object, _) = git2_repo.revparse_ext(&revstring)?;
+        git2_repo.checkout_tree(&object, None)?;
+        git2_repo.set_head_detached(object.id())?;
+
+        Ok(())
     }
 
     pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {

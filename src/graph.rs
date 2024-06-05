@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use dashmap::DashMap;
 use petgraph::{graph::NodeIndex, Graph};
 
 use crate::{
     collectors::Collector,
     config::{CollectorConfig, Frequency, MetricConfig},
-    git::{CommitHash, CommitInfo, RepositoryHandle},
+    git::{CommitHash, CommitInfo, WorktreeHandle},
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -30,17 +31,13 @@ pub struct CollectionExecutionGraph {
 impl CollectionExecutionGraph {
     pub fn run_task(
         &self,
-        storage: &mut HashMap<(CollectorConfig, CommitHash), String>,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
         node_idx: &NodeIndex,
-        repo: &RepositoryHandle,
+        repo: &mut WorktreeHandle,
     ) -> Result<String> {
         let task = &self.graph[*node_idx];
         let collector: Box<dyn Collector> = (&task.collector_config).into();
         let data = collector.collect(storage, repo, self, node_idx)?;
-        storage.insert(
-            (task.collector_config.clone(), task.commit_hash.clone()),
-            data.clone(),
-        );
         Ok(data)
     }
 }

@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
+use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -16,8 +15,8 @@ pub(super) struct TotalDiffStat;
 impl Collector for TotalDiffStat {
     fn collect(
         &self,
-        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        repo: &RepositoryHandle,
+        _storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
     ) -> Result<String> {

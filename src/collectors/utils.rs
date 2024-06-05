@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use dashmap::DashMap;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::{
@@ -62,7 +61,7 @@ pub fn find_preceding_node<
 }
 
 pub fn get_previous_commit_value_of_collector(
-    storage: &HashMap<(CollectorConfig, CommitHash), String>,
+    storage: &DashMap<(CollectorConfig, CommitHash), String>,
     graph: &CollectionExecutionGraph,
     current_node_idx: &NodeIndex,
 ) -> Option<String> {
@@ -83,10 +82,13 @@ pub fn get_previous_commit_value_of_collector(
 
     let previous_node = &graph.graph[previous_node_index];
 
-    storage
-        .get(&(
-            previous_node.collector_config.clone(),
-            previous_node.commit_hash.clone(),
-        ))
-        .cloned()
+    let value = storage.get(&(
+        previous_node.collector_config.clone(),
+        previous_node.commit_hash.clone(),
+    ));
+
+    match value {
+        Some(value) => Some(value.clone()),
+        None => None,
+    }
 }

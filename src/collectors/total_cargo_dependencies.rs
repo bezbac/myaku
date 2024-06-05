@@ -1,18 +1,19 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs::File,
     io::{BufReader, Read},
 };
 
 use anyhow::Result;
 use cargo_lock::Lockfile;
+use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::Deserialize;
 use walkdir::WalkDir;
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -48,8 +49,8 @@ pub(super) struct TotalCargoDependencies;
 impl Collector for TotalCargoDependencies {
     fn collect(
         &self,
-        _storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        repo: &RepositoryHandle,
+        _storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
         _current_node_idx: &NodeIndex,
     ) -> Result<String> {

@@ -1,11 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::Result;
+use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -18,8 +19,8 @@ pub(super) struct TotalPatternOccurences {
 impl Collector for TotalPatternOccurences {
     fn collect(
         &self,
-        storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        _repo: &RepositoryHandle,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        _repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String> {

@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    io::BufWriter,
-};
+use std::{collections::HashSet, io::BufWriter};
 
 use anyhow::Result;
+use dashmap::DashMap;
 use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
@@ -11,7 +9,7 @@ use walkdir::WalkDir;
 
 use crate::{
     config::CollectorConfig,
-    git::{CommitHash, RepositoryHandle},
+    git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
@@ -71,8 +69,8 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
 impl Collector for PatternOccurences {
     fn collect(
         &self,
-        storage: &HashMap<(CollectorConfig, CommitHash), String>,
-        repo: &RepositoryHandle,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String> {
