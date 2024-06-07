@@ -17,7 +17,7 @@ mod total_loc;
 mod total_pattern_occurences;
 mod utils;
 
-pub trait Collector {
+pub trait Collector: std::fmt::Debug {
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,

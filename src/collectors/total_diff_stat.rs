@@ -10,9 +10,11 @@ use crate::{
 
 use super::Collector;
 
+#[derive(Debug)]
 pub(super) struct TotalDiffStat;
 
 impl Collector for TotalDiffStat {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

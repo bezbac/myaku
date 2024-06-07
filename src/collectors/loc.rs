@@ -13,9 +13,11 @@ use crate::{
 
 use super::Collector;
 
+#[derive(Debug)]
 pub(super) struct Loc;
 
 impl Collector for Loc {
+    #[tracing::instrument(level = "trace")]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

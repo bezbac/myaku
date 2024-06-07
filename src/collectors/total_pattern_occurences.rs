@@ -12,11 +12,13 @@ use crate::{
 
 use super::{pattern_occurences::PartialMatchData, utils::find_preceding_node, Collector};
 
+#[derive(Debug)]
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
 }
 
 impl Collector for TotalPatternOccurences {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,

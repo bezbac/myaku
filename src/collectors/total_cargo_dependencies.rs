@@ -44,9 +44,11 @@ impl std::hash::Hash for CargoLockPackage {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct TotalCargoDependencies;
 
 impl Collector for TotalCargoDependencies {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

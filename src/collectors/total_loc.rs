@@ -11,9 +11,11 @@ use crate::{
 
 use super::Collector;
 
+#[derive(Debug)]
 pub(super) struct TotalLoc;
 
 impl Collector for TotalLoc {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

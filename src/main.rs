@@ -1,4 +1,4 @@
-use std::fs::{self};
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -6,21 +6,22 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tracing::{debug, error, info, span, warn, Level};
 use anyhow::{Ok, Result};
 use cache::Cache;
 use clap::{Parser, Subcommand};
 use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
 use dashmap::DashMap;
-use env_logger::Env;
 use git::CommitHash;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::debug;
 use nanoid::nanoid;
 use object_pool::Pool;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 use rayon::prelude::*;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::git::RepositoryHandle;
@@ -66,14 +67,28 @@ enum Commands {
     },
 }
 
+#[tracing::instrument]
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    let term = Term::stdout();
+    let term: Term;
+    if cli.no_color {
+        let filter = EnvFilter::builder()
+            .with_default_directive("myaku=info".parse().unwrap())
+            .from_env_lossy();
 
-    env_logger::Builder::from_env(
-        Env::default().default_filter_or("warn,tokei::language::language_type=off"),
-    );
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_span_events(FmtSpan::FULL)
+            // .with_ansi(false)
+            .try_init()
+            .expect("Failed to set tracing default subscriber");
+
+        // TODO: Pipe the output to some place other than stdout
+        term = Term::stdout();
+    } else {
+        term = Term::stdout();
+    }
 
     let write_err = |str: &str| {
         if !colors_enabled() {
@@ -96,9 +111,11 @@ fn main() -> Result<ExitCode> {
                 "Loaded config from {}",
                 style(&config_path.display()).underlined()
             )?;
+            info!("Loaded config from {}", &config_path.display());
 
             if config.metrics.len() == 0 {
                 write_err("No metrics configured, please add some to your config file")?;
+                error!("No metrics configured, please add some to your config file");
                 return Ok(ExitCode::from(1));
             }
 
@@ -108,6 +125,7 @@ fn main() -> Result<ExitCode> {
                 "Collecting metrics for {}",
                 style(&repository_name).underlined()
             )?;
+            info!("Collecting metrics for {}", repository_name);
 
             let reference_dir =
                 PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?;
@@ -117,20 +135,22 @@ fn main() -> Result<ExitCode> {
             let repo = match RepositoryHandle::open(&reference_dir) {
                 Result::Ok(repo) => {
                     writeln!(&term, "Repository already exists in reference directory")?;
+                    info!("Repository already exists in reference directory");
 
                     let remote_url = repo.remote_url()?;
                     if remote_url != config.reference.url {
                         write_err("Repository URL in reference directory does not match the one in the config file")?;
+                        error!("No metrics configured, please add some to your config file");
                         return Ok(ExitCode::from(1));
                     }
 
                     writeln!(&term, "Refreshing repository")?;
-
+                    let span = span!(Level::INFO, "fetching").entered();
                     repo.fetch()?;
-
                     term.clear_last_lines(1)?;
                     writeln!(&term, "Refreshed repository successfully")?;
-
+                    drop(span);
+                    
                     repo
                 }
                 // TODO: Check for specific error
@@ -140,6 +160,8 @@ fn main() -> Result<ExitCode> {
                         "Cloning repository {repository_name} into {}",
                         &reference_dir.display()
                     )?;
+                    let span = span!(Level::INFO, "cloning").entered();
+                    info!("Cloning repository {repository_name} into {}", &reference_dir.display());
 
                     let pb = ProgressBar::new(1000);
                     let style = ProgressStyle::with_template(
@@ -203,6 +225,7 @@ fn main() -> Result<ExitCode> {
                         "Successfully cloned repository into {}",
                         &reference_dir.display()
                     )?;
+                    drop(span);
 
                     repo
                 }
@@ -224,18 +247,23 @@ fn main() -> Result<ExitCode> {
             let cache = cache::FileCache::new(&cache_directory);
 
             writeln!(&term, "Collecting commit information")?;
+            let span = span!(Level::INFO, "collecting commits").entered();
             let commits = repo.get_all_commits()?;
             output.set_commits(&commits)?;
             term.clear_last_lines(1)?;
             writeln!(&term, "Collected commit information")?;
+            drop(span);
 
             writeln!(&term, "Collecting tag information")?;
+            let span = span!(Level::INFO, "collecting tags").entered();
             let tags = repo.get_all_commit_tags()?;
             output.set_commit_tags(&tags)?;
             term.clear_last_lines(1)?;
             writeln!(&term, "Collected tag information")?;
+            drop(span);
 
             writeln!(&term, "Collecting data points")?;
+            let span = span!(Level::INFO, "collecting data points").entered();
 
             let pb = ProgressBar::new(1);
             let style =
@@ -249,6 +277,7 @@ fn main() -> Result<ExitCode> {
             let storage: DashMap<(CollectorConfig, CommitHash), String> = DashMap::new();
 
             // Fill storage from cache
+            let span2 = span!(Level::TRACE, "fill storage from cache").entered();
             for commit in &commits {
                 for (metric_name, metric_config) in &config.metrics {
                     if let Some(value) = output.get_metric(&metric_name, &commit.id)? {
@@ -256,6 +285,7 @@ fn main() -> Result<ExitCode> {
                     }
                 }
             }
+            drop(span2);
 
             let collection_execution_graph =
                 build_collection_execution_graph(&config.metrics, &commits)?;
@@ -372,8 +402,10 @@ fn main() -> Result<ExitCode> {
                 pb.elapsed().as_secs_f32(),
                 reused_metric_count
             )?;
+            drop(span);
 
             writeln!(&term, "Writing data to cache")?;
+            let span = span!(Level::INFO, "writing to cache").entered();
             for nx in collection_execution_graph.graph.node_indices() {
                 let task = &collection_execution_graph.graph[nx];
 
@@ -385,8 +417,10 @@ fn main() -> Result<ExitCode> {
             }
             term.clear_last_lines(1)?;
             writeln!(&term, "Wrote data to cache")?;
+            drop(span);
 
             writeln!(&term, "Writing data to output")?;
+            let span = span!(Level::INFO, "writing to output").entered();
             for ((collector, commit), value) in storage {
                 let metric_names = config
                     .metrics
@@ -401,6 +435,7 @@ fn main() -> Result<ExitCode> {
             }
             term.clear_last_lines(1)?;
             writeln!(&term, "Wrote data to output")?;
+            drop(span);
         }
         None => {}
     }

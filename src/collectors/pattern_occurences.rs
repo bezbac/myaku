@@ -43,6 +43,7 @@ enum PartialGrepJSONLine {
     Match { data: PartialMatchData },
 }
 
+#[derive(Debug)]
 pub(super) struct PatternOccurences {
     pub pattern: String,
 }
@@ -67,6 +68,7 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
 }
 
 impl Collector for PatternOccurences {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,
