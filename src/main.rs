@@ -1,5 +1,6 @@
-use std::fs;
-use std::io::Write;
+use std::os::fd::AsRawFd;
+use std::{fs, io};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -14,7 +15,7 @@ use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
 use dashmap::DashMap;
 use git::CommitHash;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use nanoid::nanoid;
 use object_pool::Pool;
 use petgraph::graph::NodeIndex;
@@ -22,6 +23,8 @@ use petgraph::visit::Walker;
 use rayon::prelude::*;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
+use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::{registry::Registry, prelude::*};
 
 use crate::config::Config;
 use crate::git::RepositoryHandle;
@@ -48,6 +51,15 @@ struct Cli {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     /// Disable colors
     no_color: bool,
+
+    #[arg(long)]
+    /// Enable tracing
+    trace: bool,
+
+    // TODO: Make chrome trace argument more ergonomic
+    #[arg(long)]
+    /// Chrome tracing output
+    chrome_trace: bool,
 }
 
 // TODO: Add debug / verbosity flag
@@ -67,28 +79,77 @@ enum Commands {
     },
 }
 
+#[derive(Debug)]
+struct EmptyTermTarget(io::Empty);
+
+impl EmptyTermTarget {
+    pub fn new() -> Self {
+        Self(io::empty())
+    }
+}
+
+impl AsRawFd for EmptyTermTarget {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        // Return a dummy file descriptor
+        0
+    }
+}
+
+impl Read for EmptyTermTarget {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for EmptyTermTarget {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 #[tracing::instrument]
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    let term: Term;
-    if cli.no_color {
+    let should_render_fancy_output = !cli.trace;
+    let should_render_colors = colors_enabled() && !cli.no_color;
+
+    let (chrome_trace_layer, _guard) = if cli.chrome_trace {
+            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+            (Some(chrome_layer), Some(guard))
+        } else {
+            (None, None)
+        };
+
+    let (term, fmt_layer) = if should_render_fancy_output {
+        // TODO: Support the no_color flag
+        (Term::stdout(), None)
+    } else {
         let filter = EnvFilter::builder()
             .with_default_directive("myaku=info".parse().unwrap())
             .from_env_lossy();
-
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
+       
+        let fmt_subscriber = tracing_subscriber::fmt::layer()
+            .with_ansi(should_render_colors)
             .with_span_events(FmtSpan::FULL)
-            // .with_ansi(false)
-            .try_init()
-            .expect("Failed to set tracing default subscriber");
+            .with_filter(filter)
+            .boxed();
 
-        // TODO: Pipe the output to some place other than stdout
-        term = Term::stdout();
-    } else {
-        term = Term::stdout();
-    }
+        let read = EmptyTermTarget::new();
+        let write = EmptyTermTarget::new();
+
+        (Term::read_write_pair(read, write), Some(fmt_subscriber))
+    };
+
+    let subscriber = Registry::default()
+        .with(fmt_layer)
+        .with(chrome_trace_layer);
+
+    tracing::subscriber::set_global_default(subscriber).expect("unable to set global subscriber");
 
     let write_err = |str: &str| {
         if !colors_enabled() {
@@ -163,7 +224,7 @@ fn main() -> Result<ExitCode> {
                     let span = span!(Level::INFO, "cloning").entered();
                     info!("Cloning repository {repository_name} into {}", &reference_dir.display());
 
-                    let pb = ProgressBar::new(1000);
+                    let pb = ProgressBar::with_draw_target(Some(1000), ProgressDrawTarget::term(term.clone(), 20));
                     let style = ProgressStyle::with_template(
                         " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
                     )
@@ -265,7 +326,7 @@ fn main() -> Result<ExitCode> {
             writeln!(&term, "Collecting data points")?;
             let span = span!(Level::INFO, "collecting data points").entered();
 
-            let pb = ProgressBar::new(1);
+            let pb = ProgressBar::with_draw_target(Some(1), ProgressDrawTarget::term(term.clone(), 20));
             let style =
                 ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
                     .unwrap()

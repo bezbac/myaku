@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use walkdir::WalkDir;
 
 use crate::{
@@ -88,6 +89,8 @@ impl Collector for PatternOccurences {
             get_previous_commit_value_of_collector(storage, graph, current_node_idx);
 
         if let Some(previous_commit_value) = previous_commit_value {
+            debug!("found value from previous commit, only searching changed files");
+
             for changed_file_relative_path in &files_changed_in_current_commit {
                 let changed_file_absolute_path = repo.path.join(&changed_file_relative_path);
 
@@ -96,6 +99,8 @@ impl Collector for PatternOccurences {
                     // TODO: Already get this information from git to be more certain
                     continue;
                 }
+
+                debug!("searching file: {:?}", changed_file_relative_path);
 
                 let sink = sink.sink_with_path(&matcher, &changed_file_relative_path);
                 searcher.search_path(&matcher, &changed_file_absolute_path, sink)?;
@@ -119,6 +124,8 @@ impl Collector for PatternOccurences {
 
             Ok(result)
         } else {
+            debug!("did not find value from previous commit, searching all files");
+
             let root_path = &repo.path.canonicalize()?;
 
             for entry in WalkDir::new(&root_path).into_iter().filter_entry(|e| {
@@ -140,6 +147,8 @@ impl Collector for PatternOccurences {
                 let path = entry.path();
                 let path_relative_to_root = path.canonicalize()?;
                 let path_relative_to_root = path_relative_to_root.strip_prefix(root_path)?;
+
+                debug!("searching file: {:?}", path_relative_to_root);
 
                 let mut sink = sink.sink_with_path(&matcher, path_relative_to_root);
                 searcher.search_path(&matcher, entry.path(), &mut sink)?;

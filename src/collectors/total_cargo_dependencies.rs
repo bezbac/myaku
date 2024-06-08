@@ -9,6 +9,7 @@ use cargo_lock::Lockfile;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::Deserialize;
+use tracing::debug;
 use walkdir::WalkDir;
 
 use crate::{
@@ -59,6 +60,7 @@ impl Collector for TotalCargoDependencies {
         let mut crates_in_repo: HashSet<CargoTomlPackage> = HashSet::new();
         let mut dependencies: HashSet<CargoLockPackage> = HashSet::new();
 
+        debug!("searching for Cargo.toml and Cargo.lock files");
         for entry in WalkDir::new(&repo.path).into_iter() {
             let entry = entry?;
 
@@ -68,6 +70,8 @@ impl Collector for TotalCargoDependencies {
 
             if let Some(path) = entry.path().to_str() {
                 if path.ends_with("Cargo.toml") {
+                    debug!("found Cargo.toml file: {}. reading dependencies.", path);
+
                     let file = File::open(path)?;
                     let mut buf_reader = BufReader::new(file);
                     let mut contents = String::new();

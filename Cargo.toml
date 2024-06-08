@@ -28,5 +28,6 @@ sha1 = "0.10.6"
 tokei = "12.1.2"
 toml = "0.8.8"
 tracing = "0.1.40"
+tracing-chrome = "0.7.2"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 walkdir = "2.5.0"
