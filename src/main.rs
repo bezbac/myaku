@@ -23,7 +23,6 @@ use petgraph::visit::Walker;
 use rayon::prelude::*;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
-use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{registry::Registry, prelude::*};
 
 use crate::config::Config;
@@ -118,13 +117,6 @@ fn main() -> Result<ExitCode> {
     let should_render_fancy_output = !cli.trace;
     let should_render_colors = colors_enabled() && !cli.no_color;
 
-    let (chrome_trace_layer, _guard) = if cli.chrome_trace {
-            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
-            (Some(chrome_layer), Some(guard))
-        } else {
-            (None, None)
-        };
-
     let (term, fmt_layer) = if should_render_fancy_output {
         // TODO: Support the no_color flag
         (Term::stdout(), None)
@@ -146,8 +138,7 @@ fn main() -> Result<ExitCode> {
     };
 
     let subscriber = Registry::default()
-        .with(fmt_layer)
-        .with(chrome_trace_layer);
+        .with(fmt_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("unable to set global subscriber");
 
