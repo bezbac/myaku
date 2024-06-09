@@ -13,7 +13,7 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::{utils::get_previous_commit_value_of_collector, Collector};
+use super::{utils::get_previous_commit_value_of_collector, BaseCollector};
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(super) struct PartialGrepText {
@@ -66,7 +66,7 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
     Ok(matches)
 }
 
-impl Collector for PatternOccurences {
+impl BaseCollector for PatternOccurences {
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,

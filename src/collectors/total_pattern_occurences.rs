@@ -4,23 +4,18 @@ use anyhow::Result;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 
-use crate::{
-    config::CollectorConfig,
-    git::{CommitHash, WorktreeHandle},
-    graph::CollectionExecutionGraph,
-};
+use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecutionGraph};
 
-use super::{pattern_occurences::PartialMatchData, utils::find_preceding_node, Collector};
+use super::{pattern_occurences::PartialMatchData, utils::find_preceding_node, DerivedCollector};
 
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
 }
 
-impl Collector for TotalPatternOccurences {
+impl DerivedCollector for TotalPatternOccurences {
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,
-        _repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String> {

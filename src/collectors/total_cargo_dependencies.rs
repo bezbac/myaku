@@ -17,7 +17,7 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::Collector;
+use super::BaseCollector;
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash)]
 struct CargoTomlPackage {
@@ -46,7 +46,7 @@ impl std::hash::Hash for CargoLockPackage {
 
 pub(super) struct TotalCargoDependencies;
 
-impl Collector for TotalCargoDependencies {
+impl BaseCollector for TotalCargoDependencies {
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

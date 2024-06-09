@@ -8,11 +8,11 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::Collector;
+use super::BaseCollector;
 
 pub(super) struct TotalDiffStat;
 
-impl Collector for TotalDiffStat {
+impl BaseCollector for TotalDiffStat {
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

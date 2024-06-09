@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::{Ok, Result};
 use cache::Cache;
 use clap::{Parser, Subcommand};
+use collectors::Collector;
 use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
 use dashmap::DashMap;
@@ -306,13 +307,6 @@ fn main() -> Result<ExitCode> {
             let _: Vec<Result<()>> = node_indices.par_iter().map(|nx| -> Result<()> {
                 let task = &collection_execution_graph.graph[*nx];
 
-                let mut temp_worktree = worktree_pool.try_pull();
-                while temp_worktree.is_none() {
-                    temp_worktree = worktree_pool.try_pull();
-                }
-                let mut temp_worktree = temp_worktree.unwrap();
-                let mut worktree = temp_worktree.as_mut();
-
                 let is_in_storage = storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
                 
                 if is_in_storage && disable_cache == &false
@@ -323,9 +317,25 @@ fn main() -> Result<ExitCode> {
                     *reused_metric_count_lock += 1;
                     return Ok(());
                 } else {
-                    worktree.reset_hard(&task.commit_hash.0)?;
+                    let collector: Collector = (&task.collector_config).into();
 
-                    let output = collection_execution_graph.run_task(&storage, &nx, &mut worktree)?;
+                    let output = match collector {
+                        Collector::Base(collector) => {
+                            let mut temp_worktree = worktree_pool.try_pull();
+                            while temp_worktree.is_none() {
+                                temp_worktree = worktree_pool.try_pull();
+                            }
+                            let mut temp_worktree = temp_worktree.unwrap();
+                            let mut worktree = temp_worktree.as_mut();
+
+                            worktree.reset_hard(&task.commit_hash.0)?;
+
+                            collector.collect(&storage, &mut worktree, &collection_execution_graph, nx)?
+                        },
+                        Collector::Derived(collector) => {
+                            collector.collect(&storage, &collection_execution_graph, nx)?
+                        }
+                    };                    
 
                     storage.insert(
                         (task.collector_config.clone(), task.commit_hash.clone()),

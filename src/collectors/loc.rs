@@ -11,11 +11,11 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::Collector;
+use super::BaseCollector;
 
 pub(super) struct Loc;
 
-impl Collector for Loc {
+impl BaseCollector for Loc {
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), String>,

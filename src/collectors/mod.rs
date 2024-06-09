@@ -17,7 +17,12 @@ mod total_loc;
 mod total_pattern_occurences;
 mod utils;
 
-pub trait Collector {
+pub enum Collector {
+    Base(Box<dyn BaseCollector>),
+    Derived(Box<dyn DerivedCollector>),
+}
+
+pub trait BaseCollector {
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), String>,
@@ -27,24 +32,35 @@ pub trait Collector {
     ) -> Result<String>;
 }
 
-impl From<&CollectorConfig> for Box<dyn Collector> {
+pub trait DerivedCollector {
+    fn collect(
+        &self,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
+    ) -> Result<String>;
+}
+
+impl From<&CollectorConfig> for Collector {
     fn from(value: &CollectorConfig) -> Self {
         match value {
-            CollectorConfig::Loc => Box::new(loc::Loc {}),
-            CollectorConfig::TotalLoc => Box::new(total_loc::TotalLoc {}),
-            CollectorConfig::TotalDiffStat => Box::new(total_diff_stat::TotalDiffStat {}),
-            CollectorConfig::TotalCargoDeps => {
-                Box::new(total_cargo_dependencies::TotalCargoDependencies {})
+            CollectorConfig::Loc => Collector::Base(Box::new(loc::Loc {})),
+            CollectorConfig::TotalLoc => Collector::Base(Box::new(total_loc::TotalLoc {})),
+            CollectorConfig::TotalDiffStat => {
+                Collector::Base(Box::new(total_diff_stat::TotalDiffStat {}))
             }
+            CollectorConfig::TotalCargoDeps => Collector::Base(Box::new(
+                total_cargo_dependencies::TotalCargoDependencies {},
+            )),
             CollectorConfig::PatternOccurences { pattern } => {
-                Box::new(pattern_occurences::PatternOccurences {
+                Collector::Base(Box::new(pattern_occurences::PatternOccurences {
                     pattern: pattern.clone(),
-                })
+                }))
             }
             CollectorConfig::TotalPatternOccurences { pattern } => {
-                Box::new(total_pattern_occurences::TotalPatternOccurences {
+                Collector::Derived(Box::new(total_pattern_occurences::TotalPatternOccurences {
                     pattern: pattern.clone(),
-                })
+                }))
             }
         }
     }
