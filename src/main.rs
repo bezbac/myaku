@@ -59,7 +59,12 @@ struct Cli {
     // TODO: Make chrome trace argument more ergonomic
     #[arg(long)]
     /// Chrome tracing output
-    chrome_trace: bool,
+    trace_chrome: bool,
+
+    // TODO: Make tracy trace argument more ergonomic
+    #[arg(long)]
+    /// Tracy tracing output
+    trace_tracy: bool,
 }
 
 // TODO: Add debug / verbosity flag
@@ -118,12 +123,18 @@ fn main() -> Result<ExitCode> {
     let should_render_fancy_output = !cli.trace;
     let should_render_colors = colors_enabled() && !cli.no_color;
 
-    let (chrome_trace_layer, _guard) = if cli.chrome_trace {
-            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
-            (Some(chrome_layer), Some(guard))
-        } else {
-            (None, None)
-        };
+    let (chrome_trace_layer, _guard) = if cli.trace_chrome {
+        let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+        (Some(chrome_layer), Some(guard))
+    } else {
+        (None, None)
+    };
+
+    let tracy_layer = if cli.trace_tracy {
+        Some(tracing_tracy::TracyLayer::default())
+    } else {
+        None
+    };
 
     let (term, fmt_layer) = if should_render_fancy_output {
         // TODO: Support the no_color flag
@@ -147,6 +158,7 @@ fn main() -> Result<ExitCode> {
 
     let subscriber = Registry::default()
         .with(fmt_layer)
+        .with(tracy_layer)
         .with(chrome_trace_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("unable to set global subscriber");
