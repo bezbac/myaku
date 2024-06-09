@@ -7,6 +7,10 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::trace::TracerProvider;
+use opentelemetry_stdout as stdout;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing::{debug, error, info, span, warn, Level};
 use anyhow::{Ok, Result};
 use cache::Cache;
@@ -54,6 +58,11 @@ struct Cli {
     #[arg(long)]
     /// Enable tracing
     trace: bool,
+
+    // TODO: Opentelemetry should not be possible to enable when tracing is enabled
+    #[arg(long)]
+    /// Enable opentelemetry tracing
+    opentelemetry: bool,
 }
 
 // TODO: Add debug / verbosity flag
@@ -109,18 +118,14 @@ impl Write for EmptyTermTarget {
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    let should_render_fancy_output = !cli.trace;
     let should_render_colors = colors_enabled() && !cli.no_color;
 
-    let (term, fmt_layer) = if should_render_fancy_output {
-        // TODO: Support the no_color flag
-        (Term::stdout(), None)
-    } else {
+    let (term, stdout_layer, _provider) = if cli.trace {
         let filter = EnvFilter::builder()
             .with_default_directive("myaku=info".parse().unwrap())
             .from_env_lossy();
-       
-        let fmt_subscriber = tracing_subscriber::fmt::layer()
+
+        let fmt_layer = tracing_subscriber::fmt::layer()
             .with_ansi(should_render_colors)
             .with_span_events(FmtSpan::FULL)
             .with_filter(filter)
@@ -129,11 +134,34 @@ fn main() -> Result<ExitCode> {
         let read = EmptyTermTarget::new();
         let write = EmptyTermTarget::new();
 
-        (Term::read_write_pair(read, write), Some(fmt_subscriber))
+        (Term::read_write_pair(read, write), Some(fmt_layer), None)
+    } else if cli.opentelemetry {
+        let filter = EnvFilter::builder()
+            .with_default_directive("trace".parse().unwrap())
+            .from_env_lossy();
+
+        let opentelemetry_provider = TracerProvider::builder()
+            .with_simple_exporter(stdout::SpanExporter::default())
+            .build();
+
+        let tracer = opentelemetry_provider.tracer("myaku");
+
+        let layer = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(filter)
+            .boxed();
+
+        let read = EmptyTermTarget::new();
+        let write = EmptyTermTarget::new();
+
+        (Term::read_write_pair(read, write), Some(layer), Some(opentelemetry_provider))
+    } else {
+        // TODO: Support the no_color flag
+        (Term::stdout(), None, None)
     };
 
     let subscriber = Registry::default()
-        .with(fmt_layer);
+        .with(stdout_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("unable to set global subscriber");
 
