@@ -54,11 +54,6 @@ struct Cli {
     #[arg(long)]
     /// Enable tracing
     trace: bool,
-
-    // TODO: Make chrome trace argument more ergonomic
-    #[arg(long)]
-    /// Chrome tracing output
-    chrome_trace: bool,
 }
 
 // TODO: Add debug / verbosity flag
