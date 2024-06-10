@@ -273,8 +273,6 @@ fn main() -> Result<ExitCode> {
                 }
             }
 
-            let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
-
             pb.set_length(collection_execution_graph.graph.node_count().try_into()?);
 
             let new_metric_count = Arc::new(Mutex::new(0));
@@ -301,61 +299,74 @@ fn main() -> Result<ExitCode> {
                 handle
             }));
 
-            let node_indices: Vec<NodeIndex> =
-                visitor.iter(&collection_execution_graph.graph).collect();
+            // Grouped task by commit, in order of topologial sort
+            let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
+            let node_indices: Vec<Vec<NodeIndex>> = visitor
+                .iter(&collection_execution_graph.graph)
+                .fold(indexmap::IndexMap::new(), |mut acc, current| {
+                    let task = &collection_execution_graph.graph[current];
+                    let entry = acc.entry(task.commit_hash.clone()).or_insert(vec![]);
+                    entry.push(current);
+                    acc
+                })
+                .into_iter()
+                .map(|(_, task_indices)| task_indices)
+                .collect();
 
-            let _: Vec<Result<()>> = node_indices.par_iter().map(|nx| -> Result<()> {
-                let task = &collection_execution_graph.graph[*nx];
+            let _: Vec<Result<()>> = node_indices.par_iter().map(|task_indices| -> Result<()> {
+                for task_idx in task_indices {
+                    let task = &collection_execution_graph.graph[*task_idx];
 
-                let is_in_storage = storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
-                
-                if is_in_storage && disable_cache == &false
-                {
-                    // TODO: Find better solution for debug logs
-                    debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", task.collector_config, task.commit_hash);
-                    let mut reused_metric_count_lock = reused_metric_count.lock().unwrap();
-                    *reused_metric_count_lock += 1;
-                    return Ok(());
-                } else {
-                    let collector: Collector = (&task.collector_config).into();
+                    let is_in_storage = storage.contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
+                    
+                    if is_in_storage && disable_cache == &false
+                    {
+                        // TODO: Find better solution for debug logs
+                        debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", task.collector_config, task.commit_hash);
+                        let mut reused_metric_count_lock = reused_metric_count.lock().unwrap();
+                        *reused_metric_count_lock += 1;
+                        return Ok(());
+                    } else {
+                        let collector: Collector = (&task.collector_config).into();
 
-                    let output = match collector {
-                        Collector::Base(collector) => {
-                            let mut temp_worktree = worktree_pool.try_pull();
-                            while temp_worktree.is_none() {
-                                temp_worktree = worktree_pool.try_pull();
+                        let output = match collector {
+                            Collector::Base(collector) => {
+                                let mut temp_worktree = worktree_pool.try_pull();
+                                while temp_worktree.is_none() {
+                                    temp_worktree = worktree_pool.try_pull();
+                                }
+                                let mut temp_worktree = temp_worktree.unwrap();
+                                let mut worktree = temp_worktree.as_mut();
+
+                                worktree.reset_hard(&task.commit_hash.0)?;
+
+                                collector.collect(&storage, &mut worktree, &collection_execution_graph, task_idx)?
+                            },
+                            Collector::Derived(collector) => {
+                                collector.collect(&storage, &collection_execution_graph, task_idx)?
                             }
-                            let mut temp_worktree = temp_worktree.unwrap();
-                            let mut worktree = temp_worktree.as_mut();
+                        };                    
 
-                            worktree.reset_hard(&task.commit_hash.0)?;
+                        storage.insert(
+                            (task.collector_config.clone(), task.commit_hash.clone()),
+                            output.clone(),
+                        );
 
-                            collector.collect(&storage, &mut worktree, &collection_execution_graph, nx)?
-                        },
-                        Collector::Derived(collector) => {
-                            collector.collect(&storage, &collection_execution_graph, nx)?
-                        }
-                    };                    
+                        let mut new_metric_count_lock = new_metric_count.lock().unwrap();
 
-                    storage.insert(
-                        (task.collector_config.clone(), task.commit_hash.clone()),
-                        output.clone(),
-                    );
+                        *new_metric_count_lock += 1;
+                    }
 
-                    let mut new_metric_count_lock = new_metric_count.lock().unwrap();
+                    let reused_metric_count_lock = reused_metric_count.lock().unwrap();
+                    let new_metric_count_lock = new_metric_count.lock().unwrap();
 
-                    *new_metric_count_lock += 1;
+                    pb.inc(1);
+                    pb.set_message(format!(
+                        "{} collected ({} reused)",
+                        *new_metric_count_lock + *reused_metric_count_lock,
+                        *reused_metric_count_lock
+                    ));
                 }
-
-                let reused_metric_count_lock = reused_metric_count.lock().unwrap();
-                let new_metric_count_lock = new_metric_count.lock().unwrap();
-
-                pb.inc(1);
-                pb.set_message(format!(
-                    "{} collected ({} reused)",
-                    *new_metric_count_lock + *reused_metric_count_lock,
-                    *reused_metric_count_lock
-                ));
 
                 Ok(())
             }).collect();
