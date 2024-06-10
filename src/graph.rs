@@ -72,7 +72,7 @@ pub fn add_task(
                 CollectionGraphEdge { distance: 0 },
             );
         }
-        CollectorConfig::PatternOccurences { pattern: _ } => {
+        CollectorConfig::PatternOccurences { pattern: _ } | CollectorConfig::TotalCargoDeps => {
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,

@@ -9,7 +9,6 @@ use cargo_lock::Lockfile;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::Deserialize;
-use walkdir::WalkDir;
 
 use crate::{
     config::CollectorConfig,
@@ -17,7 +16,10 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::BaseCollector;
+use super::{
+    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
+    BaseCollector,
+};
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash)]
 struct CargoTomlPackage {
@@ -49,42 +51,75 @@ pub(super) struct TotalCargoDependencies;
 impl BaseCollector for TotalCargoDependencies {
     fn collect(
         &self,
-        _storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
         repo: &mut WorktreeHandle,
-        _graph: &CollectionExecutionGraph,
-        _current_node_idx: &NodeIndex,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
     ) -> Result<String> {
-        let mut crates_in_repo: HashSet<CargoTomlPackage> = HashSet::new();
-        let mut dependencies: HashSet<CargoLockPackage> = HashSet::new();
+        let changed_files_in_current_commit_value = get_value_of_preceeding_node(
+            storage,
+            graph,
+            current_node_idx,
+            |e| e.distance == 0,
+            |n| n.collector_config == CollectorConfig::ChangedFiles,
+        )?;
 
-        for entry in WalkDir::new(&repo.path).into_iter() {
-            let entry = entry?;
+        let changed_files_in_current_commit: HashSet<String> =
+            serde_json::from_str(&changed_files_in_current_commit_value)?;
 
-            if entry.path().components().any(|f| f.as_os_str() == ".git") {
-                continue;
+        let modified_cargo_toml_paths: Vec<&String> = changed_files_in_current_commit
+            .iter()
+            .filter(|relative_path| {
+                let path = repo.path.join(relative_path);
+                let p = &path;
+                p.ends_with("Cargo.toml")
+            })
+            .collect();
+
+        let modified_cargo_lock_paths: Vec<&String> = changed_files_in_current_commit
+            .iter()
+            .filter(|relative_path| {
+                let path = repo.path.join(relative_path);
+                let p = &path;
+                p.ends_with("Cargo.lock")
+            })
+            .collect();
+
+        if modified_cargo_toml_paths.len() < 1 && modified_cargo_lock_paths.len() < 1 {
+            let previous_commit_value =
+                get_previous_commit_value_of_collector(storage, graph, current_node_idx);
+
+            if let Some(previous_commit_value) = previous_commit_value {
+                return Ok(previous_commit_value);
             }
+        }
 
-            if let Some(path) = entry.path().to_str() {
-                if path.ends_with("Cargo.toml") {
-                    let file = File::open(path)?;
-                    let mut buf_reader = BufReader::new(file);
-                    let mut contents = String::new();
-                    buf_reader.read_to_string(&mut contents)?;
+        let mut crates_in_repo: HashSet<CargoTomlPackage> = HashSet::new();
+        for relative_path in modified_cargo_toml_paths {
+            let path = repo.path.join(relative_path);
+            let p = &path;
 
-                    let cargo_toml: CargoToml = toml::from_str(&contents)?;
+            let file = File::open(p)?;
+            let mut buf_reader = BufReader::new(file);
+            let mut contents = String::new();
+            buf_reader.read_to_string(&mut contents)?;
 
-                    if let Some(package) = cargo_toml.package {
-                        crates_in_repo.insert(package);
-                    }
-                }
+            let cargo_toml: CargoToml = toml::from_str(&contents)?;
 
-                if path.ends_with("Cargo.lock") {
-                    let lockfile = Lockfile::load(path)?;
+            if let Some(package) = cargo_toml.package {
+                crates_in_repo.insert(package);
+            }
+        }
 
-                    for package in lockfile.packages {
-                        dependencies.insert(CargoLockPackage(package));
-                    }
-                }
+        let mut dependencies: HashSet<CargoLockPackage> = HashSet::new();
+        for relative_path in modified_cargo_lock_paths {
+            let path = repo.path.join(relative_path);
+            let p = &path;
+
+            let lockfile = Lockfile::load(p)?;
+
+            for package in lockfile.packages {
+                dependencies.insert(CargoLockPackage(package));
             }
         }
 
