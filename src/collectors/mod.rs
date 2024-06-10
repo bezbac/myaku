@@ -49,7 +49,7 @@ impl From<&CollectorConfig> for Collector {
             CollectorConfig::ChangedFiles => {
                 Collector::Base(Box::new(changed_files::ChangedFiles {}))
             }
-            CollectorConfig::TotalLoc => Collector::Base(Box::new(total_loc::TotalLoc {})),
+            CollectorConfig::TotalLoc => Collector::Derived(Box::new(total_loc::TotalLoc {})),
             CollectorConfig::TotalDiffStat => {
                 Collector::Base(Box::new(total_diff_stat::TotalDiffStat {}))
             }

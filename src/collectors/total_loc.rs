@@ -1,29 +1,32 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
-use tokei::Languages;
 
-use crate::{
-    config::CollectorConfig,
-    git::{CommitHash, WorktreeHandle},
-    graph::CollectionExecutionGraph,
-};
+use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecutionGraph};
 
-use super::BaseCollector;
+use super::{utils::get_value_of_preceeding_node, DerivedCollector};
 
 pub(super) struct TotalLoc;
 
-impl BaseCollector for TotalLoc {
+impl DerivedCollector for TotalLoc {
     fn collect(
         &self,
-        _storage: &DashMap<(CollectorConfig, CommitHash), String>,
-        repo: &mut WorktreeHandle,
-        _graph: &CollectionExecutionGraph,
-        _current_node_idx: &NodeIndex,
+        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        graph: &CollectionExecutionGraph,
+        current_node_idx: &NodeIndex,
     ) -> Result<String> {
-        let mut languages = Languages::new();
-        languages.get_statistics(&[&repo.path], &[".git"], &tokei::Config::default());
-        let value = languages.total().code;
+        let loc_value = get_value_of_preceeding_node(
+            storage,
+            graph,
+            current_node_idx,
+            |e| e.distance == 0,
+            |n| n.collector_config == CollectorConfig::Loc,
+        )?;
+
+        let loc: BTreeMap<String, usize> = serde_json::from_str(&loc_value)?;
+        let value: usize = loc.values().sum();
         let result = serde_json::to_string(&value)?;
         Ok(result)
     }

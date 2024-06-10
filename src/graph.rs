@@ -91,6 +91,25 @@ pub fn add_task(
                 CollectionGraphEdge { distance: 0 },
             );
         }
+        CollectorConfig::TotalLoc => {
+            let dependency_node_idx = add_task(
+                graph,
+                created_tasks,
+                format!("{metric_name}_derived_loc").as_str(),
+                &MetricConfig {
+                    collector: CollectorConfig::Loc,
+                    frequency: Frequency::PerCommit,
+                },
+                current_commit_hash,
+                previous_commit_hash,
+            )?;
+
+            graph.add_edge(
+                dependency_node_idx,
+                node_idx,
+                CollectionGraphEdge { distance: 0 },
+            );
+        }
         _ => {}
     }
 
