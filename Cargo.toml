@@ -22,7 +22,7 @@ nanoid = "0.4.0"
 num_cpus = "1.16.0"
 object-pool = "0.5.4"
 petgraph = { version = "0.6.5", features = ["rayon"] }
-rayon = "1.10.0"
+rayon = { version = "1.10.0", optional = true }
 regex = "1.10.2"
 rstest = "0.18.2"
 serde = { version = "1.0", features = ["derive"] }
@@ -31,3 +31,11 @@ sha1 = "0.10.6"
 tokei = "12.1.2"
 toml = "0.8.8"
 walkdir = "2.5.0"
+
+[features]
+default = ["rayon"]
+rayon = ["dep:rayon"]
+
+[profile.profiling]
+inherits = "release"
+debug = true

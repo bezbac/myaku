@@ -21,6 +21,7 @@ use nanoid::nanoid;
 use object_pool::Pool;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
 use crate::config::Config;
@@ -313,7 +314,12 @@ fn main() -> Result<ExitCode> {
                 .map(|(_, task_indices)| task_indices)
                 .collect();
 
-            let _: Vec<Result<()>> = node_indices.par_iter().map(|task_indices| -> Result<()> {
+            #[cfg(not(feature = "rayon"))]
+            let iter = node_indices.iter();
+            #[cfg(feature = "rayon")]
+            let iter = node_indices.par_iter();
+            
+            let _: Vec<Result<()>> = iter.map(|task_indices| -> Result<()> {
                 for task_idx in task_indices {
                     let task = &collection_execution_graph.graph[*task_idx];
 
