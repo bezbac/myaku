@@ -13,7 +13,10 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::{utils::get_previous_commit_value_of_collector, BaseCollector};
+use super::{
+    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
+    BaseCollector,
+};
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(super) struct PartialGrepText {
@@ -74,7 +77,16 @@ impl BaseCollector for PatternOccurences {
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String> {
-        let files_changed_in_current_commit = repo.get_current_changed_file_paths()?;
+        let changed_files_in_current_commit_value = get_value_of_preceeding_node(
+            storage,
+            graph,
+            current_node_idx,
+            |e| e.distance == 0,
+            |n| n.collector_config == CollectorConfig::ChangedFiles,
+        )?;
+
+        let changed_files_in_current_commit: HashSet<String> =
+            serde_json::from_str(&changed_files_in_current_commit_value)?;
 
         let mut searcher = SearcherBuilder::new().line_number(true).build();
         let matcher = RegexMatcher::new(&self.pattern)?;
@@ -86,7 +98,7 @@ impl BaseCollector for PatternOccurences {
             get_previous_commit_value_of_collector(storage, graph, current_node_idx);
 
         if let Some(previous_commit_value) = previous_commit_value {
-            for changed_file_relative_path in &files_changed_in_current_commit {
+            for changed_file_relative_path in &changed_files_in_current_commit {
                 let changed_file_absolute_path = repo.path.join(&changed_file_relative_path);
 
                 if !changed_file_absolute_path.exists() {
@@ -106,7 +118,7 @@ impl BaseCollector for PatternOccurences {
 
             let filtered_cached_matches: HashSet<PartialMatchData> = previous_commit_matches
                 .iter()
-                .filter(|m| !files_changed_in_current_commit.contains(&m.path.text))
+                .filter(|m| !changed_files_in_current_commit.contains(&m.path.text))
                 .cloned()
                 .collect();
 

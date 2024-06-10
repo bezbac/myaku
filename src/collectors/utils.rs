@@ -92,3 +92,35 @@ pub fn get_previous_commit_value_of_collector(
         None => None,
     }
 }
+
+pub fn get_value_of_preceeding_node<
+    EP: Fn(&CollectionGraphEdge) -> bool,
+    NP: Fn(&CollectionTask) -> bool,
+>(
+    storage: &DashMap<(CollectorConfig, CommitHash), String>,
+    graph: &CollectionExecutionGraph,
+    current_node_idx: &NodeIndex,
+    edge_predicate: EP,
+    node_predicate: NP,
+) -> anyhow::Result<String> {
+    let task_idx = find_preceding_node(graph, current_node_idx, edge_predicate, node_predicate)
+        .unwrap_or_else(|| {
+            panic!(
+                "Could not find required dependency task for node {:?}",
+                current_node_idx
+            )
+        });
+
+    let task = &graph.graph[task_idx];
+
+    let task_value = storage
+        .get(&(task.collector_config.clone(), task.commit_hash.clone()))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not read required value from storage for node {:?}",
+                task_idx
+            )
+        })?;
+
+    Ok(task_value.clone())
+}

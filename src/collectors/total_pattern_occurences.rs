@@ -6,7 +6,9 @@ use petgraph::graph::NodeIndex;
 
 use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecutionGraph};
 
-use super::{pattern_occurences::PartialMatchData, utils::find_preceding_node, DerivedCollector};
+use super::{
+    pattern_occurences::PartialMatchData, utils::get_value_of_preceeding_node, DerivedCollector,
+};
 
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
@@ -19,7 +21,8 @@ impl DerivedCollector for TotalPatternOccurences {
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
     ) -> Result<String> {
-        let pattern_occurences_task_idx = find_preceding_node(
+        let pattern_occurences_value = get_value_of_preceeding_node(
+            storage,
             graph,
             current_node_idx,
             |e| e.distance == 0,
@@ -29,27 +32,7 @@ impl DerivedCollector for TotalPatternOccurences {
                         pattern: self.pattern.clone(),
                     }
             },
-        )
-        .unwrap_or_else(|| {
-            panic!(
-                "Could not find required dependency task for node {:?}",
-                current_node_idx
-            )
-        });
-
-        let pattern_occurences_task = &graph.graph[pattern_occurences_task_idx];
-
-        let pattern_occurences_value = storage
-            .get(&(
-                pattern_occurences_task.collector_config.clone(),
-                pattern_occurences_task.commit_hash.clone(),
-            ))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not read required value from storage for node {:?}",
-                    pattern_occurences_task_idx
-                )
-            })?;
+        )?;
 
         let matches: HashSet<PartialMatchData> = serde_json::from_str(&pattern_occurences_value)?;
 

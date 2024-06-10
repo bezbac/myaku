@@ -23,6 +23,8 @@ pub enum CollectorConfig {
     TotalPatternOccurences { pattern: String },
     #[serde(rename = "pattern-occurences")]
     PatternOccurences { pattern: String },
+    #[serde(rename = "changed-files")]
+    ChangedFiles,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]

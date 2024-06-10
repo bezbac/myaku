@@ -72,6 +72,25 @@ pub fn add_task(
                 CollectionGraphEdge { distance: 0 },
             );
         }
+        CollectorConfig::PatternOccurences { pattern: _ } => {
+            let dependency_node_idx = add_task(
+                graph,
+                created_tasks,
+                format!("{metric_name}_derived_changed_files").as_str(),
+                &MetricConfig {
+                    collector: CollectorConfig::ChangedFiles,
+                    frequency: Frequency::PerCommit,
+                },
+                current_commit_hash,
+                previous_commit_hash,
+            )?;
+
+            graph.add_edge(
+                dependency_node_idx,
+                node_idx,
+                CollectionGraphEdge { distance: 0 },
+            );
+        }
         _ => {}
     }
 
