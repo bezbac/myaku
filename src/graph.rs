@@ -4,13 +4,12 @@ use anyhow::Result;
 use petgraph::{graph::NodeIndex, Graph};
 
 use crate::{
-    config::{CollectorConfig, Frequency, MetricConfig},
+    config::{CollectorConfig, MetricConfig},
     git::{CommitHash, CommitInfo},
 };
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct CollectionTask {
-    pub metric_name: String,
     pub commit_hash: CommitHash,
     pub collector_config: CollectorConfig,
 }
@@ -28,39 +27,35 @@ pub struct CollectionExecutionGraph {
 
 pub fn add_task(
     graph: &mut Graph<CollectionTask, CollectionGraphEdge>,
-    created_tasks: &mut HashMap<(String, MetricConfig, CommitHash), NodeIndex>,
-    metric_name: &str,
-    metric_config: &MetricConfig,
+    created_tasks: &mut HashMap<(CollectorConfig, CommitHash), NodeIndex>,
+    collector_config: &CollectorConfig,
     current_commit_hash: &CommitHash,
     previous_commit_hash: Option<&CommitHash>,
 ) -> Result<NodeIndex> {
+    if let Some(node_idx) =
+        created_tasks.get(&(collector_config.clone(), current_commit_hash.clone()))
+    {
+        return Ok(node_idx.clone());
+    }
+
     let node_idx = graph.add_node(CollectionTask {
-        metric_name: metric_name.to_string(),
         commit_hash: current_commit_hash.clone(),
-        collector_config: metric_config.collector.clone(),
+        collector_config: collector_config.clone(),
     });
 
     created_tasks.insert(
-        (
-            metric_name.to_string(),
-            metric_config.clone(),
-            current_commit_hash.clone(),
-        ),
+        (collector_config.clone(), current_commit_hash.clone()),
         node_idx,
     );
 
     // Create dependency tasks
-    match &metric_config.collector {
+    match &collector_config {
         CollectorConfig::TotalPatternOccurences { pattern } => {
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,
-                format!("{metric_name}_derived_pattern_occurences").as_str(),
-                &MetricConfig {
-                    collector: CollectorConfig::PatternOccurences {
-                        pattern: pattern.clone(),
-                    },
-                    frequency: Frequency::PerCommit,
+                &CollectorConfig::PatternOccurences {
+                    pattern: pattern.clone(),
                 },
                 current_commit_hash,
                 previous_commit_hash,
@@ -76,11 +71,7 @@ pub fn add_task(
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,
-                format!("{metric_name}_derived_changed_files").as_str(),
-                &MetricConfig {
-                    collector: CollectorConfig::ChangedFiles,
-                    frequency: Frequency::PerCommit,
-                },
+                &CollectorConfig::ChangedFiles,
                 current_commit_hash,
                 previous_commit_hash,
             )?;
@@ -95,11 +86,7 @@ pub fn add_task(
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,
-                format!("{metric_name}_derived_loc").as_str(),
-                &MetricConfig {
-                    collector: CollectorConfig::Loc,
-                    frequency: Frequency::PerCommit,
-                },
+                &CollectorConfig::Loc,
                 current_commit_hash,
                 previous_commit_hash,
             )?;
@@ -114,11 +101,9 @@ pub fn add_task(
     }
 
     if let Some(previous_commit_hash) = previous_commit_hash {
-        if let Some(last_commit_task_idx) = created_tasks.get(&(
-            metric_name.to_string(),
-            metric_config.clone(),
-            previous_commit_hash.clone(),
-        )) {
+        if let Some(last_commit_task_idx) =
+            created_tasks.get(&(collector_config.clone(), previous_commit_hash.clone()))
+        {
             graph.add_edge(
                 last_commit_task_idx.clone(),
                 node_idx,
@@ -136,7 +121,7 @@ pub fn build_collection_execution_graph(
 ) -> Result<CollectionExecutionGraph> {
     let mut graph: Graph<CollectionTask, CollectionGraphEdge> = Graph::new();
 
-    let mut created_tasks: HashMap<(String, MetricConfig, CommitHash), NodeIndex> = HashMap::new();
+    let mut created_tasks: HashMap<(CollectorConfig, CommitHash), NodeIndex> = HashMap::new();
 
     for commit_idx in 0..commits.len() {
         let previous_commit = if commit_idx > 0 {
@@ -149,12 +134,11 @@ pub fn build_collection_execution_graph(
 
         let current_commit_hash = &current_commit.id;
 
-        for (metric_name, metric_config) in metrics {
+        for (_, metric_config) in metrics {
             add_task(
                 &mut graph,
                 &mut created_tasks,
-                metric_name,
-                metric_config,
+                &metric_config.collector,
                 current_commit_hash,
                 previous_commit.map(|c| &c.id),
             )?;

@@ -312,7 +312,7 @@ fn main() -> Result<ExitCode> {
                 if is_in_storage && disable_cache == &false
                 {
                     // TODO: Find better solution for debug logs
-                    debug!("Found data from previous run for metric {} and commit {}, skipping collection", task.metric_name, task.commit_hash);
+                    debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", task.collector_config, task.commit_hash);
                     let mut reused_metric_count_lock = reused_metric_count.lock().unwrap();
                     *reused_metric_count_lock += 1;
                     return Ok(());
