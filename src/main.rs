@@ -60,9 +60,6 @@ enum Commands {
         #[arg(short, long, value_name = "FILE")]
         config: PathBuf,
 
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
     },
@@ -89,7 +86,6 @@ fn main() -> Result<ExitCode> {
         Some(Commands::Collect {
             config: config_path,
             no_cache: disable_cache,
-            output: outut_directory,
         }) => {
             let config = Config::from_file(config_path)?;
 
@@ -111,8 +107,7 @@ fn main() -> Result<ExitCode> {
                 style(&repository_name).underlined()
             )?;
 
-            let reference_dir =
-                PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?;
+            let reference_dir = config.repository_path.unwrap_or(PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?);
 
             fs::create_dir_all(&reference_dir)?;
 
@@ -217,12 +212,13 @@ fn main() -> Result<ExitCode> {
 
             repo.reset_hard(&format!("origin/{}", branch))?;
 
-            let output_directory = outut_directory
-                .clone()
+            let output_directory = config.output_path
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
+
             let mut output = FileOutput::new(&output_directory);
 
-            let cache_directory = PathBuf::from(format!(".myaku/cache/{repository_name}"));
+            let cache_directory = config.cache_path.unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
+
             let cache = cache::FileCache::new(&cache_directory);
 
             writeln!(&term, "Collecting commit information")?;

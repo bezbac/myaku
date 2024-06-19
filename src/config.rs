@@ -50,6 +50,10 @@ pub struct GitRepository {
 pub struct Config {
     pub reference: GitRepository,
     pub metrics: HashMap<String, MetricConfig>,
+
+    pub repository_path: Option<PathBuf>,
+    pub cache_path: Option<PathBuf>,
+    pub output_path: Option<PathBuf>,
 }
 
 impl Config {
