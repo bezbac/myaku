@@ -14,17 +14,18 @@ use crate::{
 };
 
 use super::{
+    changed_files::ChangedFilesValue,
     utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
-    BaseCollector,
+    BaseCollector, CollectorValue,
 };
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub(super) struct PartialGrepText {
+pub struct PartialGrepText {
     pub text: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub(super) struct PartialMatchDataSubmatch {
+pub struct PartialMatchDataSubmatch {
     pub start: usize,
     pub end: usize,
     #[serde(rename = "match")]
@@ -32,7 +33,7 @@ pub(super) struct PartialMatchDataSubmatch {
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub(super) struct PartialMatchData {
+pub struct PartialMatchData {
     pub path: PartialGrepText,
     pub line_number: usize,
     pub absolute_offset: usize,
@@ -46,7 +47,7 @@ enum PartialGrepJSONLine {
     Match { data: PartialMatchData },
 }
 
-pub(super) struct PatternOccurences {
+pub struct PatternOccurences {
     pub pattern: String,
 }
 
@@ -69,24 +70,30 @@ fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<Parti
     Ok(matches)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatternOccurencesValue {
+    pub matches: HashSet<PartialMatchData>,
+}
+
 impl BaseCollector for PatternOccurences {
     fn collect(
         &self,
-        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
-    ) -> Result<String> {
-        let changed_files_in_current_commit_value = get_value_of_preceeding_node(
-            storage,
-            graph,
-            current_node_idx,
-            |e| e.distance == 0,
-            |n| n.collector_config == CollectorConfig::ChangedFiles,
-        )?;
+    ) -> Result<CollectorValue> {
+        let changed_files_in_current_commit_value: ChangedFilesValue =
+            get_value_of_preceeding_node(
+                storage,
+                graph,
+                current_node_idx,
+                |e| e.distance == 0,
+                |n| n.collector_config == CollectorConfig::ChangedFiles,
+            )?
+            .try_into()?;
 
-        let changed_files_in_current_commit: HashSet<String> =
-            serde_json::from_str(&changed_files_in_current_commit_value)?;
+        let changed_files_in_current_commit = changed_files_in_current_commit_value.files;
 
         let mut searcher = SearcherBuilder::new().line_number(true).build();
         let matcher = RegexMatcher::new(&self.pattern)?;
@@ -113,8 +120,9 @@ impl BaseCollector for PatternOccurences {
 
             let matches = get_matches_from_sink(sink)?;
 
-            let previous_commit_matches: HashSet<PartialMatchData> =
-                serde_json::from_str(&previous_commit_value)?;
+            let previous_commit_value: PatternOccurencesValue = previous_commit_value.try_into()?;
+
+            let previous_commit_matches: HashSet<PartialMatchData> = previous_commit_value.matches;
 
             let filtered_cached_matches: HashSet<PartialMatchData> = previous_commit_matches
                 .iter()
@@ -125,9 +133,11 @@ impl BaseCollector for PatternOccurences {
             let combined_matches: HashSet<PartialMatchData> =
                 filtered_cached_matches.union(&matches).cloned().collect();
 
-            let result = serde_json::to_string(&combined_matches)?;
+            let value = PatternOccurencesValue {
+                matches: combined_matches,
+            };
 
-            Ok(result)
+            Ok(value.into())
         } else {
             let root_path = &repo.path.canonicalize()?;
 
@@ -157,9 +167,9 @@ impl BaseCollector for PatternOccurences {
 
             let matches = get_matches_from_sink(sink)?;
 
-            let result = serde_json::to_string(&matches)?;
+            let value = PatternOccurencesValue { matches };
 
-            Ok(result)
+            Ok(value.into())
         }
     }
 }

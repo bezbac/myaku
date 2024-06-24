@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Ok, Result};
 use cache::Cache;
 use clap::{Parser, Subcommand};
-use collectors::Collector;
+use collectors::{Collector, CollectorValue};
 use config::CollectorConfig;
 use console::{colors_enabled, style, Term};
 use dashmap::DashMap;
@@ -19,16 +19,18 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
 use nanoid::nanoid;
 use object_pool::Pool;
+use output::{JsonOutput, Output};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use serde::Serialize;
 
 use crate::config::Config;
 use crate::git::RepositoryHandle;
 use crate::git::{clone_repository, CloneProgress};
 use crate::graph::build_collection_execution_graph;
-use crate::output::{FileOutput, Output};
+use crate::output::ParquetOutput;
 
 // mod _collectors;
 mod cache;
@@ -53,6 +55,14 @@ struct Cli {
 
 // TODO: Add debug / verbosity flag
 
+#[derive(Clone, Debug, Default, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum OutputType {
+    Json,
+    #[default]
+    Parquet
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Collect metrics
@@ -62,6 +72,9 @@ enum Commands {
 
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
+
+        #[arg(long, default_value_t, value_enum)]
+        output: OutputType,
     },
 }
 
@@ -86,6 +99,7 @@ fn main() -> Result<ExitCode> {
         Some(Commands::Collect {
             config: config_path,
             no_cache: disable_cache,
+            output: output_type
         }) => {
             let config = Config::from_file(config_path)?;
 
@@ -215,7 +229,10 @@ fn main() -> Result<ExitCode> {
             let output_directory = config.output_path
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
 
-            let mut output = FileOutput::new(&output_directory);
+            let mut output: Box<dyn Output> = match output_type {
+                OutputType::Json => Box::new(JsonOutput::new(&output_directory)),
+                OutputType::Parquet => Box::new(ParquetOutput::new(&output_directory)),
+            };
 
             let cache_directory = config.cache_path.unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
 
@@ -244,29 +261,35 @@ fn main() -> Result<ExitCode> {
             pb.enable_steady_tick(Duration::from_millis(100));
             pb.set_message("Building execution graph");
 
-            let storage: DashMap<(CollectorConfig, CommitHash), String> = DashMap::new();
+            let storage: DashMap<(CollectorConfig, CommitHash), CollectorValue> = DashMap::new();
 
-            // Fill storage from cache
-            for commit in &commits {
-                for (metric_name, metric_config) in &config.metrics {
-                    if let Some(value) = output.get_metric(&metric_name, &commit.id)? {
-                        storage.insert((metric_config.collector.clone(), commit.id.clone()), value);
+            if !disable_cache {
+                output.load()?;
+
+                // Fill storage from previous output
+                for commit in &commits {
+                    for (metric_name, metric_config) in &config.metrics {
+                        if let Some(value) = output.get_metric(&metric_name, &commit.id)? {
+                            storage.insert((metric_config.collector.clone(), commit.id.clone()), value);
+                        }
                     }
                 }
             }
 
             let collection_execution_graph =
-                build_collection_execution_graph(&config.metrics, &commits)?;
+                    build_collection_execution_graph(&config.metrics, &commits)?;
 
-            // Fill storage from cache
-            for nx in collection_execution_graph.graph.node_indices() {
-                let task = &collection_execution_graph.graph[nx];
+            if !disable_cache {
+                // Fill storage from cache
+                for nx in collection_execution_graph.graph.node_indices() {
+                    let task = &collection_execution_graph.graph[nx];
 
-                if let Some(value) = cache.lookup(&task.collector_config, &task.commit_hash)? {
-                    storage.insert(
-                        (task.collector_config.clone(), task.commit_hash.clone()),
-                        value,
-                    );
+                    if let Some(value) = cache.lookup(&task.collector_config, &task.commit_hash)? {
+                        storage.insert(
+                            (task.collector_config.clone(), task.commit_hash.clone()),
+                            value,
+                        );
+                    }
                 }
             }
 
@@ -422,6 +445,7 @@ fn main() -> Result<ExitCode> {
                     output.set_metric(&metric_name, &commit, &value)?;
                 }
             }
+            output.flush()?;
             term.clear_last_lines(1)?;
             writeln!(&term, "Wrote data to output")?;
         }

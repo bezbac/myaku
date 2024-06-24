@@ -8,7 +8,7 @@ use anyhow::Result;
 use cargo_lock::Lockfile;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::CollectorConfig,
@@ -17,8 +17,9 @@ use crate::{
 };
 
 use super::{
+    changed_files::ChangedFilesValue,
     utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
-    BaseCollector,
+    BaseCollector, CollectorValue,
 };
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash)]
@@ -48,24 +49,31 @@ impl std::hash::Hash for CargoLockPackage {
 
 pub(super) struct TotalCargoDependencies;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TotalCargoDependenciesValue {
+    total_dependencies: u32,
+}
+
 impl BaseCollector for TotalCargoDependencies {
     fn collect(
         &self,
-        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
-    ) -> Result<String> {
-        let changed_files_in_current_commit_value = get_value_of_preceeding_node(
-            storage,
-            graph,
-            current_node_idx,
-            |e| e.distance == 0,
-            |n| n.collector_config == CollectorConfig::ChangedFiles,
-        )?;
+    ) -> Result<CollectorValue> {
+        let changed_files_in_current_commit_value: ChangedFilesValue =
+            get_value_of_preceeding_node(
+                storage,
+                graph,
+                current_node_idx,
+                |e| e.distance == 0,
+                |n| n.collector_config == CollectorConfig::ChangedFiles,
+            )?
+            .try_into()?;
 
         let changed_files_in_current_commit: HashSet<String> =
-            serde_json::from_str(&changed_files_in_current_commit_value)?;
+            changed_files_in_current_commit_value.files;
 
         let modified_cargo_toml_paths: Vec<&String> = changed_files_in_current_commit
             .iter()
@@ -133,8 +141,10 @@ impl BaseCollector for TotalCargoDependencies {
             })
             .count();
 
-        let result = serde_json::to_string(&dep_count)?;
+        let value = TotalCargoDependenciesValue {
+            total_dependencies: dep_count as u32,
+        };
 
-        Ok(result)
+        Ok(value.into())
     }
 }

@@ -1,27 +1,32 @@
-use std::collections::HashSet;
-
 use anyhow::Result;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
+use serde::{Deserialize, Serialize};
 
 use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecutionGraph};
 
 use super::{
-    pattern_occurences::PartialMatchData, utils::get_value_of_preceeding_node, DerivedCollector,
+    pattern_occurences::PatternOccurencesValue, utils::get_value_of_preceeding_node,
+    CollectorValue, DerivedCollector,
 };
 
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TotalPatternOccurencesValue {
+    total_occurences: u32,
+}
+
 impl DerivedCollector for TotalPatternOccurences {
     fn collect(
         &self,
-        storage: &DashMap<(CollectorConfig, CommitHash), String>,
+        storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         graph: &CollectionExecutionGraph,
         current_node_idx: &NodeIndex,
-    ) -> Result<String> {
-        let pattern_occurences_value = get_value_of_preceeding_node(
+    ) -> Result<CollectorValue> {
+        let pattern_occurences_value: PatternOccurencesValue = get_value_of_preceeding_node(
             storage,
             graph,
             current_node_idx,
@@ -32,14 +37,13 @@ impl DerivedCollector for TotalPatternOccurences {
                         pattern: self.pattern.clone(),
                     }
             },
-        )?;
+        )?
+        .try_into()?;
 
-        let matches: HashSet<PartialMatchData> = serde_json::from_str(&pattern_occurences_value)?;
+        let value = TotalPatternOccurencesValue {
+            total_occurences: pattern_occurences_value.matches.len() as u32,
+        };
 
-        let total_matches = matches.len();
-
-        let result = serde_json::to_string(&total_matches)?;
-
-        return Ok(result);
+        Ok(value.into())
     }
 }

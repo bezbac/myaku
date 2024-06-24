@@ -7,20 +7,20 @@ use std::{
 use anyhow::Result;
 use sha1::{Digest, Sha1};
 
-use crate::{config::CollectorConfig, git::CommitHash};
+use crate::{collectors::CollectorValue, config::CollectorConfig, git::CommitHash};
 
 pub trait Cache {
     fn lookup(
         &self,
         collector_config: &CollectorConfig,
         commit_hash: &CommitHash,
-    ) -> Result<Option<String>>;
+    ) -> Result<Option<CollectorValue>>;
 
     fn store(
         &self,
         collector_config: &CollectorConfig,
         commit_hash: &CommitHash,
-        value: &str,
+        value: &CollectorValue,
     ) -> Result<()>;
 }
 
@@ -63,7 +63,7 @@ impl Cache for FileCache {
         &self,
         collector_config: &CollectorConfig,
         commit_hash: &CommitHash,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<CollectorValue>> {
         let file_path = self.get_data_point_path(collector_config, commit_hash)?;
 
         if !file_path.exists() {
@@ -76,16 +76,18 @@ impl Cache for FileCache {
 
         reader.read_to_end(&mut output)?;
 
-        let output = String::from_utf8(output)?;
+        let contents = String::from_utf8(output)?;
 
-        return Ok(Some(output));
+        let value: CollectorValue = serde_json::from_str(&contents)?;
+
+        return Ok(Some(value));
     }
 
     fn store(
         &self,
         collector_config: &CollectorConfig,
         commit_hash: &CommitHash,
-        value: &str,
+        value: &CollectorValue,
     ) -> Result<()> {
         let file_path = self.get_data_point_path(collector_config, commit_hash)?;
 
@@ -93,8 +95,10 @@ impl Cache for FileCache {
             std::fs::create_dir_all(parent)?;
         }
 
+        let contents = serde_json::to_string(value)?;
+
         let mut file = File::create(file_path)?;
-        file.write_all(value.as_bytes())?;
+        file.write_all(contents.as_bytes())?;
 
         Ok(())
     }

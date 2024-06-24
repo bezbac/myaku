@@ -7,6 +7,8 @@ use crate::{
     graph::{CollectionExecutionGraph, CollectionGraphEdge, CollectionTask},
 };
 
+use super::CollectorValue;
+
 fn find_incoming_edges<F: Fn(&CollectionGraphEdge) -> bool>(
     graph: &CollectionExecutionGraph,
     current_node_idx: &NodeIndex,
@@ -61,10 +63,10 @@ pub fn find_preceding_node<
 }
 
 pub fn get_previous_commit_value_of_collector(
-    storage: &DashMap<(CollectorConfig, CommitHash), String>,
+    storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
     graph: &CollectionExecutionGraph,
     current_node_idx: &NodeIndex,
-) -> Option<String> {
+) -> Option<CollectorValue> {
     let current_node = &graph.graph[*current_node_idx];
 
     let previous_node_index = find_preceding_node(
@@ -97,12 +99,12 @@ pub fn get_value_of_preceeding_node<
     EP: Fn(&CollectionGraphEdge) -> bool,
     NP: Fn(&CollectionTask) -> bool,
 >(
-    storage: &DashMap<(CollectorConfig, CommitHash), String>,
+    storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
     graph: &CollectionExecutionGraph,
     current_node_idx: &NodeIndex,
     edge_predicate: EP,
     node_predicate: NP,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<CollectorValue> {
     let task_idx = find_preceding_node(graph, current_node_idx, edge_predicate, node_predicate)
         .unwrap_or_else(|| {
             panic!(
