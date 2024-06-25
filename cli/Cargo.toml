@@ -1,0 +1,26 @@
+[package]
+name = "myaku-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "myaku"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.78"
+clap = { version = "4.4.12", features = ["derive"] }
+console = "0.15.8"
+env_logger = "0.10.1"
+regex = "1.10.2"
+rstest = "0.18.2"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8.8"
+
+[dependencies.myaku]
+path = "../lib"
+default-features = false
+
+[features]
+default = ["rayon"]
+rayon = ["myaku/rayon"]
