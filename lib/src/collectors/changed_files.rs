@@ -13,6 +13,7 @@ use crate::{
 
 use super::{BaseCollector, CollectorValue};
 
+#[derive(Debug)]
 pub(super) struct ChangedFiles;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -21,6 +22,7 @@ pub struct ChangedFilesValue {
 }
 
 impl BaseCollector for ChangedFiles {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

@@ -9,7 +9,7 @@ use sha1::{Digest, Sha1};
 
 use crate::{collectors::CollectorValue, config::CollectorConfig, git::CommitHash};
 
-pub trait Cache {
+pub trait Cache: core::fmt::Debug {
     fn lookup(
         &self,
         collector_config: &CollectorConfig,
@@ -24,6 +24,7 @@ pub trait Cache {
     ) -> Result<()>;
 }
 
+#[derive(Debug)]
 pub struct FileCache {
     base: PathBuf,
 }

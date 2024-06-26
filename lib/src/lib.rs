@@ -32,33 +32,40 @@ pub use config::{CollectorConfig, GitRepository, MetricConfig};
 pub use git::CloneProgress;
 pub use output::{JsonOutput, Output, ParquetOutput};
 
+#[derive(Debug)]
 pub struct ReadyForClone {}
 
+#[derive(Debug)]
 pub struct ReadyForFetch {
     repo: RepositoryHandle,
 }
 
+#[derive(Debug)]
 pub struct IdleWithoutCommits {
     repo: RepositoryHandle,
 }
 
+#[derive(Debug)]
 pub struct IdleWithCommits {
     repo: RepositoryHandle,
     commits: Vec<CommitInfo>,
     storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
 }
 
+#[derive(Debug)]
 pub struct ReadyForCollection {
     repo: RepositoryHandle,
     collection_execution_graph: CollectionExecutionGraph,
     storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
 }
 
+#[derive(Debug)]
 pub struct PostCollection {
     collection_execution_graph: CollectionExecutionGraph,
     storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
 }
 
+#[derive(Debug)]
 pub enum CollectionProcessState {
     /// The collection process has been created but nothing has been executed yet
     Initial,
@@ -116,7 +123,12 @@ pub enum ExecutionProgressCallbackState {
 }
 
 impl CollectionProcess {
-    pub fn execute_initial(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn initialize(mut self) -> Result<CollectionProcess> {
+        if self.metrics.len() < 1 {
+            return Err(anyhow::anyhow!("No metrics configured"));
+        }
+
         return if let CollectionProcessState::Initial = self.state {
             let reference_dir = &self.repository_path;
 
@@ -143,7 +155,8 @@ impl CollectionProcess {
         };
     }
 
-    pub fn execute_fetch(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn fetch(mut self) -> Result<CollectionProcess> {
         return if let CollectionProcessState::ReadyForFetch(ReadyForFetch { repo }) = self.state {
             repo.fetch()?;
             self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
@@ -154,10 +167,8 @@ impl CollectionProcess {
         };
     }
 
-    pub fn execute_clone(
-        mut self,
-        callback: impl Fn(&CloneProgress) -> (),
-    ) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self, callback))]
+    pub fn clone(mut self, callback: impl Fn(&CloneProgress) -> ()) -> Result<CollectionProcess> {
         return if let CollectionProcessState::ReadyForClone(ReadyForClone {}) = self.state {
             let repo = clone_repository(&self.reference.url, &self.repository_path, callback)?;
             self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
@@ -168,6 +179,7 @@ impl CollectionProcess {
         };
     }
 
+    #[tracing::instrument(level = "trace", skip(self))]
     pub fn skip_fetch(mut self) -> Result<CollectionProcess> {
         return if let CollectionProcessState::ReadyForFetch(ReadyForFetch { repo }) = self.state {
             self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
@@ -177,7 +189,8 @@ impl CollectionProcess {
         };
     }
 
-    pub fn execute_collect_commits(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn collect_commits(mut self) -> Result<CollectionProcess> {
         if let CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo }) = self.state
         {
             let branch = match &self.reference.branch {
@@ -202,7 +215,8 @@ impl CollectionProcess {
         Ok(self)
     }
 
-    pub fn execute_collect_tags(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn collect_tags(mut self) -> Result<CollectionProcess> {
         if let CollectionProcessState::IdleWithCommits(IdleWithCommits {
             repo,
             storage: _storage,
@@ -225,7 +239,8 @@ impl CollectionProcess {
         Ok(self)
     }
 
-    pub fn execute_prepare_for_collection(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn prepare_for_collection(mut self) -> Result<CollectionProcess> {
         return if let CollectionProcessState::IdleWithCommits(IdleWithCommits {
             repo,
             commits,
@@ -280,7 +295,8 @@ impl CollectionProcess {
         };
     }
 
-    pub fn execute_collection(
+    #[tracing::instrument(level = "trace", skip(self, channel))]
+    pub fn collect_metrics(
         mut self,
         channel: std::sync::mpsc::Sender<ExecutionProgressCallbackState>,
     ) -> Result<CollectionProcess> {
@@ -408,7 +424,8 @@ impl CollectionProcess {
         Ok(self)
     }
 
-    pub fn execute_write_to_cache(self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn write_to_cache(self) -> Result<CollectionProcess> {
         if let CollectionProcessState::PostCollection(PostCollection {
             collection_execution_graph,
             storage,
@@ -433,7 +450,8 @@ impl CollectionProcess {
         Ok(self)
     }
 
-    pub fn execute_write_to_output(mut self) -> Result<CollectionProcess> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn write_to_output(mut self) -> Result<CollectionProcess> {
         if let CollectionProcessState::PostCollection(PostCollection {
             storage,
             collection_execution_graph: _collection_execution_graph,

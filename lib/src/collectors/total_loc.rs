@@ -7,6 +7,7 @@ use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecution
 
 use super::{loc::LocValue, utils::get_value_of_preceeding_node, CollectorValue, DerivedCollector};
 
+#[derive(Debug)]
 pub(super) struct TotalLoc;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -15,6 +16,7 @@ pub struct TotalLocValue {
 }
 
 impl DerivedCollector for TotalLoc {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

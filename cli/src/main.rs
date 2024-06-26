@@ -1,3 +1,5 @@
+use std::io::{self, Read};
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -7,11 +9,13 @@ use std::{io::Write, time::Duration};
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
-use env_logger::Env;
-use indicatif::{ProgressBar, ProgressStyle};
-use log::debug;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use myaku::{Cache, CollectionProcess, FileCache, JsonOutput, Output, ParquetOutput};
 use serde::Serialize;
+use tracing::debug;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, registry::Registry};
 
 mod config;
 mod util;
@@ -28,6 +32,10 @@ struct Cli {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     /// Disable colors
     no_color: bool,
+
+    #[arg(long)]
+    /// Enable tracing
+    trace: bool,
 }
 
 #[derive(Clone, Debug, Default, clap::ValueEnum, Serialize)]
@@ -56,22 +64,99 @@ enum Commands {
     },
 }
 
+#[derive(Debug)]
+struct EmptyTermTarget(io::Empty);
+
+impl EmptyTermTarget {
+    pub fn new() -> Self {
+        Self(io::empty())
+    }
+}
+
+impl AsRawFd for EmptyTermTarget {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        // Return a dummy file descriptor
+        0
+    }
+}
+
+impl Read for EmptyTermTarget {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for EmptyTermTarget {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+#[tracing::instrument]
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    let mut term = Term::stdout();
+    let should_render_fancy_output = !cli.trace;
+    let should_render_colors = colors_enabled() && !cli.no_color;
 
-    env_logger::Builder::from_env(
-        Env::default().default_filter_or("warn,tokei::language::language_type=off"),
-    );
+    let (term, fmt_layer) = if should_render_fancy_output {
+        // TODO: Support the no_color flag
+        (Term::stdout(), None)
+    } else {
+        let user_filter = EnvFilter::builder().try_from_env();
 
-    let write_err = |str: &str| {
-        if !colors_enabled() {
-            return writeln!(&term, "{str}");
-        }
+        let (filter, span_level) = if let Result::Ok(user_filter) = user_filter {
+            (user_filter, FmtSpan::FULL)
+        } else {
+            (
+                EnvFilter::builder()
+                    .with_default_directive("myaku=info".parse().unwrap())
+                    .from_env_lossy(),
+                FmtSpan::ENTER,
+            )
+        };
 
-        writeln!(&term, "{}", style(format!("{str}")).red().bold())
+        let fmt_subscriber = tracing_subscriber::fmt::layer()
+            .with_ansi(should_render_colors)
+            .with_span_events(span_level)
+            .with_filter(filter)
+            .boxed();
+
+        let read = EmptyTermTarget::new();
+        let write = EmptyTermTarget::new();
+
+        (Term::read_write_pair(read, write), Some(fmt_subscriber))
     };
+
+    let subscriber = Registry::default().with(fmt_layer);
+
+    tracing::subscriber::set_global_default(subscriber).expect("unable to set global subscriber");
+
+    macro_rules! error {
+        ($($arg:tt)*) => {{
+            tracing::error!($($arg)*);
+
+            if !should_render_colors {
+                writeln!(&term, $($arg)*)
+            } else {
+                writeln!(&term, "{}", style(format!($($arg)*)).red().bold())
+            }
+        }};
+    }
+
+    macro_rules! info {
+        ($($arg:tt)*) => {{
+            tracing::info!($($arg)*);
+            writeln!(
+                &term,
+                $($arg)*
+            )
+        }};
+    }
 
     match &cli.command {
         Some(Commands::Collect {
@@ -82,14 +167,13 @@ fn main() -> Result<ExitCode> {
         }) => {
             let config = config::Config::from_file(config_path)?;
 
-            writeln!(
-                &term,
+            info!(
                 "Loaded config from {}",
                 style(&config_path.display()).underlined()
             )?;
 
             if config.metrics.len() == 0 {
-                write_err("No metrics configured, please add some to your config file")?;
+                error!("No metrics configured, please add some to your config file")?;
                 return Ok(ExitCode::from(1));
             }
 
@@ -117,8 +201,7 @@ fn main() -> Result<ExitCode> {
             let cache = FileCache::new(&cache_directory);
             let cache: Box<dyn Cache> = Box::new(cache);
 
-            writeln!(
-                &term,
+            info!(
                 "Collecting metrics for {}",
                 style(&repository_name).underlined()
             )?;
@@ -138,36 +221,39 @@ fn main() -> Result<ExitCode> {
                 disable_cache: *disable_cache,
             };
 
-            let process = process.execute_initial()?;
+            let process = process.initialize()?;
 
             let process = match process.state {
                 myaku::CollectionProcessState::ReadyForFetch(_) => {
-                    writeln!(term, "Repository already exists in reference directory")?;
+                    info!("Repository already exists in reference directory")?;
 
                     if *offline {
                         let process = process.skip_fetch()?;
-                        writeln!(term, "Skipped refresh due to --offline argument")?;
+                        info!("Skipped refresh due to --offline argument")?;
                         process
                     } else {
-                        writeln!(term, "Refreshing repository")?;
-                        let process = process.execute_fetch()?;
+                        info!("Refreshing repository")?;
+                        let process = process.fetch()?;
                         term.clear_last_lines(1)?;
-                        writeln!(term, "Refreshed repository successfully")?;
+                        info!("Refreshed repository successfully")?;
                         process
                     }
                 }
                 myaku::CollectionProcessState::ReadyForClone(_) => {
                     if *offline {
-                        writeln!(term, "Repository already exists in reference directory")?;
+                        info!("Repository already exists in reference directory")?;
 
                         return Err(anyhow::anyhow!(
                             "Cannot clone repository. Disabled due to --offline argument"
                         ));
                     }
 
-                    writeln!(term, "Cloning repository into {}", &reference_dir.display())?;
+                    info!("Cloning repository into {}", &reference_dir.display())?;
 
-                    let pb = ProgressBar::new(1000);
+                    let pb = ProgressBar::with_draw_target(
+                        Some(1000),
+                        ProgressDrawTarget::term(term.clone(), 20),
+                    );
                     let style = ProgressStyle::with_template(
                         " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
                     )
@@ -176,7 +262,7 @@ fn main() -> Result<ExitCode> {
                     pb.set_style(style);
                     pb.enable_steady_tick(Duration::from_millis(100));
                     pb.set_message("Initializing");
-                    let process = process.execute_clone(|progress| match progress {
+                    let process = process.clone(|progress| match progress {
                         myaku::CloneProgress::EnumeratingObjects => {
                             pb.set_message("Enumerating objects");
                         }
@@ -206,8 +292,7 @@ fn main() -> Result<ExitCode> {
                     })?;
                     pb.finish_and_clear();
                     term.clear_last_lines(1)?;
-                    writeln!(
-                        term,
+                    info!(
                         "Successfully cloned repository into {}",
                         &reference_dir.display()
                     )?;
@@ -217,23 +302,24 @@ fn main() -> Result<ExitCode> {
                 _ => return Err(anyhow::anyhow!("Invalid state")),
             };
 
-            writeln!(term, "Collecting commit information")?;
-            let process = process.execute_collect_commits()?;
+            info!("Collecting commit information")?;
+            let process = process.collect_commits()?;
             term.clear_last_lines(1)?;
-            writeln!(term, "Collected commit information")?;
+            info!("Collected commit information")?;
 
-            writeln!(term, "Collecting tag information")?;
-            let process = process.execute_collect_tags()?;
+            info!("Collecting tag information")?;
+            let process = process.collect_tags()?;
             term.clear_last_lines(1)?;
-            writeln!(term, "Collected tag information")?;
+            info!("Collected tag information")?;
 
-            writeln!(term, "Building execution graph")?;
-            let process = process.execute_prepare_for_collection()?;
+            info!("Building execution graph")?;
+            let process = process.prepare_for_collection()?;
             term.clear_last_lines(1)?;
-            writeln!(term, "Built execution graph")?;
+            info!("Built execution graph")?;
 
-            writeln!(term, "Collecting data points")?;
-            let pb = ProgressBar::new(1);
+            info!("Collecting data points")?;
+            let pb =
+                ProgressBar::with_draw_target(Some(1), ProgressDrawTarget::term(term.clone(), 20));
             let style =
                 ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
                     .unwrap()
@@ -306,7 +392,7 @@ fn main() -> Result<ExitCode> {
                 }
             });
 
-            let process = process.execute_collection(tx)?;
+            let process = process.collect_metrics(tx)?;
 
             reader
                 .join()
@@ -323,8 +409,7 @@ fn main() -> Result<ExitCode> {
                 .into_inner()
                 .unwrap();
             term.clear_last_lines(1)?;
-            writeln!(
-                term,
+            info!(
                 "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                 fresh_task_count + reused_task_count,
                 metric_count,
@@ -332,15 +417,15 @@ fn main() -> Result<ExitCode> {
                 reused_task_count
             )?;
 
-            writeln!(term, "Writing data to cache")?;
-            let process = process.execute_write_to_cache()?;
+            info!("Writing data to cache")?;
+            let process = process.write_to_cache()?;
             term.clear_last_lines(1)?;
-            writeln!(term, "Wrote data to cache")?;
+            info!("Wrote data to cache")?;
 
-            writeln!(term, "Writing data to output")?;
-            let process = process.execute_write_to_output()?;
+            info!("Writing data to output")?;
+            let process = process.write_to_output()?;
             term.clear_last_lines(1)?;
-            writeln!(term, "Wrote data to output")?;
+            info!("Wrote data to output")?;
 
             drop(process);
         }

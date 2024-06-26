@@ -47,6 +47,7 @@ impl std::hash::Hash for CargoLockPackage {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct TotalCargoDependencies;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +56,7 @@ pub struct TotalCargoDependenciesValue {
 }
 
 impl BaseCollector for TotalCargoDependencies {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

@@ -11,6 +11,7 @@ use crate::{
 
 use super::{BaseCollector, CollectorValue};
 
+#[derive(Debug)]
 pub(super) struct TotalDiffStat;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -21,6 +22,7 @@ pub struct TotalDiffStatValue {
 }
 
 impl BaseCollector for TotalDiffStat {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

@@ -10,6 +10,7 @@ use super::{
     CollectorValue, DerivedCollector,
 };
 
+#[derive(Debug)]
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
 }
@@ -20,6 +21,7 @@ pub struct TotalPatternOccurencesValue {
 }
 
 impl DerivedCollector for TotalPatternOccurences {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

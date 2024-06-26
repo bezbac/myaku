@@ -14,6 +14,7 @@ use crate::{
 
 use super::{BaseCollector, CollectorValue};
 
+#[derive(Debug)]
 pub(super) struct Loc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,7 @@ pub struct LocValue {
 }
 
 impl BaseCollector for Loc {
+    #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,

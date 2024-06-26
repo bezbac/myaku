@@ -23,7 +23,7 @@ use crate::{
     git::{CommitHash, CommitInfo, CommitTagInfo},
 };
 
-pub trait Output {
+pub trait Output: core::fmt::Debug {
     fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()>;
 
     fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()>;
@@ -40,6 +40,7 @@ pub trait Output {
     fn flush(&self) -> Result<()>;
 }
 
+#[derive(Debug)]
 pub struct JsonOutput {
     base: PathBuf,
 }
@@ -139,6 +140,7 @@ impl Output for JsonOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct ParquetOutput {
     base: PathBuf,
 

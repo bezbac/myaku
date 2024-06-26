@@ -9,9 +9,9 @@ use std::{
 use anyhow::Result;
 use execute::Execute;
 use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
-use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Author {
