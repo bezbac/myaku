@@ -48,6 +48,9 @@ enum Commands {
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
 
+        #[arg(short, long, action = clap::ArgAction::SetTrue)]
+        offline: bool,
+
         #[arg(long, default_value_t, value_enum)]
         output: OutputType,
     },
@@ -75,6 +78,7 @@ fn main() -> Result<ExitCode> {
             config: config_path,
             no_cache: disable_cache,
             output: output_type,
+            offline,
         }) => {
             let config = config::Config::from_file(config_path)?;
 
@@ -139,13 +143,28 @@ fn main() -> Result<ExitCode> {
             let process = match process.state {
                 myaku::CollectionProcessState::ReadyForFetch(_) => {
                     writeln!(term, "Repository already exists in reference directory")?;
-                    writeln!(term, "Refreshing repository")?;
-                    let process = process.execute_fetch()?;
-                    term.clear_last_lines(1)?;
-                    writeln!(term, "Refreshed repository successfully")?;
-                    process
+
+                    if *offline {
+                        let process = process.skip_fetch()?;
+                        writeln!(term, "Skipped refresh due to --offline argument")?;
+                        process
+                    } else {
+                        writeln!(term, "Refreshing repository")?;
+                        let process = process.execute_fetch()?;
+                        term.clear_last_lines(1)?;
+                        writeln!(term, "Refreshed repository successfully")?;
+                        process
+                    }
                 }
                 myaku::CollectionProcessState::ReadyForClone(_) => {
+                    if *offline {
+                        writeln!(term, "Repository already exists in reference directory")?;
+
+                        return Err(anyhow::anyhow!(
+                            "Cannot clone repository. Disabled due to --offline argument"
+                        ));
+                    }
+
                     writeln!(term, "Cloning repository into {}", &reference_dir.display())?;
 
                     let pb = ProgressBar::new(1000);

@@ -168,6 +168,15 @@ impl CollectionProcess {
         };
     }
 
+    pub fn skip_fetch(mut self) -> Result<CollectionProcess> {
+        return if let CollectionProcessState::ReadyForFetch(ReadyForFetch { repo }) = self.state {
+            self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
+            Ok(self)
+        } else {
+            Err(anyhow::anyhow!("Invalid state"))
+        };
+    }
+
     pub fn execute_collect_commits(mut self) -> Result<CollectionProcess> {
         if let CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo }) = self.state
         {
