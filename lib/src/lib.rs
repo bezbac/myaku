@@ -9,6 +9,8 @@ use anyhow::{Ok, Result};
 use collectors::{Collector, CollectorValue};
 use console::Term;
 use dashmap::DashMap;
+use git::CommitInfo;
+use graph::CollectionExecutionGraph;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
 use nanoid::nanoid;
@@ -34,7 +36,59 @@ pub use cache::{Cache, FileCache};
 pub use config::{CollectorConfig, GitRepository, MetricConfig};
 pub use output::{JsonOutput, Output, ParquetOutput};
 
+pub struct ReadyForClone {}
+
+pub struct ReadyForFetch {
+    repo: RepositoryHandle,
+}
+
+pub struct IdleWithoutCommits {
+    repo: RepositoryHandle,
+}
+
+pub struct IdleWithCommits {
+    repo: RepositoryHandle,
+    commits: Vec<CommitInfo>,
+    storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+}
+
+pub struct ReadyForCollection {
+    repo: RepositoryHandle,
+    collection_execution_graph: CollectionExecutionGraph,
+    storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+}
+
+pub struct PostCollection {
+    collection_execution_graph: CollectionExecutionGraph,
+    storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+}
+
+pub enum CollectionProcessState {
+    /// The collection process has been created but nothing has been executed yet
+    Initial,
+
+    /// The repository does not exist inside the specified path but we can clone it into it
+    ReadyForClone(ReadyForClone),
+
+    /// The repository does exist in the specified path and can be refreshed
+    ReadyForFetch(ReadyForFetch),
+
+    /// Ready to work with the repository
+    IdleWithoutCommits(IdleWithoutCommits),
+
+    /// Ready to build the execution graph
+    IdleWithCommits(IdleWithCommits),
+
+    /// The execution graph has been built and can be run
+    ReadyForCollection(ReadyForCollection),
+
+    /// The collection has been executed and the results can be accessed
+    PostCollection(PostCollection),
+}
+
 pub struct CollectionProcess<'t> {
+    pub state: CollectionProcessState,
+
     pub term: &'t Term,
 
     pub reference: GitRepository,
@@ -51,204 +105,293 @@ pub struct CollectionProcess<'t> {
 }
 
 impl<'t> CollectionProcess<'t> {
-    pub fn execute(&mut self) -> Result<()> {
-        let reference_dir = &self.repository_path;
+    pub fn execute_initial(mut self) -> Result<CollectionProcess<'t>> {
+        return if let CollectionProcessState::Initial = self.state {
+            let reference_dir = &self.repository_path;
 
-        fs::create_dir_all(&reference_dir)?;
+            fs::create_dir_all(&reference_dir)?;
 
-        let repo = match RepositoryHandle::open(&reference_dir) {
-            Result::Ok(repo) => {
-                writeln!(
-                    self.term,
-                    "Repository already exists in reference directory"
-                )?;
+            match RepositoryHandle::open(&reference_dir) {
+                Result::Ok(repo) => {
+                    writeln!(
+                        self.term,
+                        "Repository already exists in reference directory"
+                    )?;
 
-                let remote_url = repo.remote_url()?;
-                if remote_url != self.reference.url {
-                    return Err(anyhow::anyhow!("Repository URL in reference directory does not match the one in the config file"));
-                }
-
-                writeln!(self.term, "Refreshing repository")?;
-
-                repo.fetch()?;
-
-                self.term.clear_last_lines(1)?;
-                writeln!(self.term, "Refreshed repository successfully")?;
-
-                repo
-            }
-            // TODO: Check for specific error
-            Result::Err(_) => {
-                writeln!(
-                    self.term,
-                    "Cloning repository into {}",
-                    &reference_dir.display()
-                )?;
-
-                let pb = ProgressBar::new(1000);
-                let style =
-                    ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
-                        .unwrap()
-                        .progress_chars("#>-");
-                pb.set_style(style);
-                pb.enable_steady_tick(Duration::from_millis(100));
-
-                pb.set_message("Initializing");
-
-                let repo = clone_repository(&self.reference.url, &reference_dir, |progress| {
-                    let bar = &pb;
-
-                    match progress {
-                        CloneProgress::EnumeratingObjects => {
-                            bar.set_message("Enumerating objects");
-                        }
-                        CloneProgress::CountingObjects { finished, total } => {
-                            bar.set_message(format!("Counting objects [{}, {}]", finished, total));
-                            bar.set_length(*total as u64);
-                            bar.set_position(*finished as u64);
-                        }
-                        CloneProgress::CompressingObjects { finished, total } => {
-                            bar.set_message(format!(
-                                "Compressing objects [{}, {}]",
-                                finished, total
-                            ));
-                            bar.set_length(*total as u64);
-                            bar.set_position(*finished as u64);
-                        }
-                        CloneProgress::ReceivingObjects { finished, total } => {
-                            bar.set_message(format!("Receiving objects [{}, {}]", finished, total));
-                            bar.set_length(*total as u64);
-                            bar.set_position(*finished as u64);
-                        }
-                        CloneProgress::ResolvingDeltas { finished, total } => {
-                            bar.set_message(format!("Resolving deltas [{}, {}]", finished, total));
-                            bar.set_length(*total as u64);
-                            bar.set_position(*finished as u64);
-                        }
+                    let remote_url = repo.remote_url()?;
+                    if remote_url != self.reference.url {
+                        return Err(anyhow::anyhow!("Repository URL in reference directory does not match the one in the config file"));
                     }
-                })?;
 
-                pb.finish_and_clear();
+                    self.state = CollectionProcessState::ReadyForFetch(ReadyForFetch { repo })
+                }
+                Err(_) => {
+                    // TODO: Check specific error
+                    self.state = CollectionProcessState::ReadyForClone(ReadyForClone {})
+                }
+            };
 
-                self.term.clear_last_lines(1)?;
-                writeln!(
-                    self.term,
-                    "Successfully cloned repository into {}",
-                    &reference_dir.display()
-                )?;
-
-                repo
-            }
+            Ok(self)
+        } else {
+            Err(anyhow::anyhow!("Invalid state"))
         };
+    }
 
-        let branch = match &self.reference.branch {
-            Some(branch) => branch.clone(),
-            None => repo.find_main_branch()?,
+    pub fn execute_fetch(mut self) -> Result<CollectionProcess<'t>> {
+        return if let CollectionProcessState::ReadyForFetch(ReadyForFetch { repo }) = self.state {
+            writeln!(self.term, "Refreshing repository")?;
+
+            repo.fetch()?;
+
+            self.term.clear_last_lines(1)?;
+            writeln!(self.term, "Refreshed repository successfully")?;
+
+            self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
+
+            Ok(self)
+        } else {
+            Err(anyhow::anyhow!("Invalid state"))
         };
+    }
 
-        repo.reset_hard(&format!("origin/{}", branch))?;
+    pub fn execute_clone(mut self) -> Result<CollectionProcess<'t>> {
+        return if let CollectionProcessState::ReadyForClone(ReadyForClone {}) = self.state {
+            writeln!(
+                self.term,
+                "Cloning repository into {}",
+                &self.repository_path.display()
+            )?;
 
-        writeln!(self.term, "Collecting commit information")?;
-        let commits = repo.get_all_commits()?;
-        self.output.set_commits(&commits)?;
-        self.term.clear_last_lines(1)?;
-        writeln!(self.term, "Collected commit information")?;
+            let pb = ProgressBar::new(1000);
+            let style =
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+                    .unwrap()
+                    .progress_chars("#>-");
+            pb.set_style(style);
+            pb.enable_steady_tick(Duration::from_millis(100));
 
-        writeln!(self.term, "Collecting tag information")?;
-        let tags = repo.get_all_commit_tags()?;
-        self.output.set_commit_tags(&tags)?;
-        self.term.clear_last_lines(1)?;
-        writeln!(self.term, "Collected tag information")?;
+            pb.set_message("Initializing");
 
-        writeln!(self.term, "Collecting data points")?;
+            let repo = clone_repository(&self.reference.url, &self.repository_path, |progress| {
+                let bar = &pb;
 
-        let pb = ProgressBar::new(1);
-        let style = ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
-            .unwrap()
-            .progress_chars("#>-");
-        pb.set_style(style);
-        pb.enable_steady_tick(Duration::from_millis(100));
-        pb.set_message("Building execution graph");
-
-        let storage: DashMap<(CollectorConfig, CommitHash), CollectorValue> = DashMap::new();
-
-        if !self.disable_cache {
-            self.output.load()?;
-
-            // Fill storage from previous output
-            for commit in &commits {
-                for (metric_name, metric_config) in &self.metrics {
-                    if let Some(value) = self.output.get_metric(&metric_name, &commit.id)? {
-                        storage.insert((metric_config.collector.clone(), commit.id.clone()), value);
+                match progress {
+                    CloneProgress::EnumeratingObjects => {
+                        bar.set_message("Enumerating objects");
+                    }
+                    CloneProgress::CountingObjects { finished, total } => {
+                        bar.set_message(format!("Counting objects [{}, {}]", finished, total));
+                        bar.set_length(*total as u64);
+                        bar.set_position(*finished as u64);
+                    }
+                    CloneProgress::CompressingObjects { finished, total } => {
+                        bar.set_message(format!("Compressing objects [{}, {}]", finished, total));
+                        bar.set_length(*total as u64);
+                        bar.set_position(*finished as u64);
+                    }
+                    CloneProgress::ReceivingObjects { finished, total } => {
+                        bar.set_message(format!("Receiving objects [{}, {}]", finished, total));
+                        bar.set_length(*total as u64);
+                        bar.set_position(*finished as u64);
+                    }
+                    CloneProgress::ResolvingDeltas { finished, total } => {
+                        bar.set_message(format!("Resolving deltas [{}, {}]", finished, total));
+                        bar.set_length(*total as u64);
+                        bar.set_position(*finished as u64);
                     }
                 }
-            }
-        }
+            })?;
 
-        let collection_execution_graph = build_collection_execution_graph(&self.metrics, &commits)?;
+            pb.finish_and_clear();
 
-        if !self.disable_cache {
-            // Fill storage from cache
-            for nx in collection_execution_graph.graph.node_indices() {
-                let task = &collection_execution_graph.graph[nx];
+            self.term.clear_last_lines(1)?;
+            writeln!(
+                self.term,
+                "Successfully cloned repository into {}",
+                &self.repository_path.display()
+            )?;
 
-                if let Some(value) = self
-                    .cache
-                    .lookup(&task.collector_config, &task.commit_hash)?
-                {
-                    storage.insert(
-                        (task.collector_config.clone(), task.commit_hash.clone()),
-                        value,
-                    );
-                }
-            }
-        }
+            self.state = CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo });
 
-        pb.set_length(collection_execution_graph.graph.node_count().try_into()?);
+            Ok(self)
+        } else {
+            Err(anyhow::anyhow!("Invalid state"))
+        };
+    }
 
-        let new_metric_count = Arc::new(Mutex::new(0));
-        let reused_metric_count = Arc::new(Mutex::new(0));
+    pub fn execute_collect_commits(mut self) -> Result<CollectionProcess<'t>> {
+        if let CollectionProcessState::IdleWithoutCommits(IdleWithoutCommits { repo }) = self.state
+        {
+            let branch = match &self.reference.branch {
+                Some(branch) => branch.clone(),
+                None => repo.find_main_branch()?,
+            };
 
-        let alphabet: [char; 16] = [
-            '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
-        ];
+            repo.reset_hard(&format!("origin/{}", branch))?;
 
-        fs::create_dir_all(&self.worktree_path)?;
+            writeln!(self.term, "Collecting commit information")?;
+            let commits = repo.get_all_commits()?;
+            self.output.set_commits(&commits)?;
+            self.term.clear_last_lines(1)?;
+            writeln!(self.term, "Collected commit information")?;
 
-        let available_cpus = num_cpus::get();
-
-        let worktree_pool = Arc::new(Pool::new(available_cpus, || {
-            let id = nanoid!(10, &alphabet);
-
-            let handle = repo
-                .create_temp_worktree(&id, &self.worktree_path.join(&id))
-                .unwrap();
-
-            handle
-        }));
-
-        // Grouped task by commit, in order of topologial sort
-        let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
-        let node_indices: Vec<Vec<NodeIndex>> = visitor
-            .iter(&collection_execution_graph.graph)
-            .fold(indexmap::IndexMap::new(), |mut acc, current| {
-                let task = &collection_execution_graph.graph[current];
-                let entry = acc.entry(task.commit_hash.clone()).or_insert(vec![]);
-                entry.push(current);
-                acc
+            self.state = CollectionProcessState::IdleWithCommits(IdleWithCommits {
+                repo,
+                commits,
+                storage: DashMap::new(),
             })
-            .into_iter()
-            .map(|(_, task_indices)| task_indices)
-            .collect();
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
 
-        #[cfg(not(feature = "rayon"))]
-        let iter = node_indices.iter();
-        #[cfg(feature = "rayon")]
-        let iter = node_indices.par_iter();
+        Ok(self)
+    }
 
-        let disable_cache = self.disable_cache;
+    pub fn execute_collect_tags(mut self) -> Result<CollectionProcess<'t>> {
+        if let CollectionProcessState::IdleWithCommits(IdleWithCommits {
+            repo,
+            storage,
+            commits: _commits,
+        }) = &self.state
+        {
+            let branch = match &self.reference.branch {
+                Some(branch) => branch.clone(),
+                None => repo.find_main_branch()?,
+            };
 
-        let _: Vec<Result<()>> = iter
+            repo.reset_hard(&format!("origin/{}", branch))?;
+
+            writeln!(self.term, "Collecting tag information")?;
+            let tags = repo.get_all_commit_tags()?;
+            self.output.set_commit_tags(&tags)?;
+            self.term.clear_last_lines(1)?;
+            writeln!(self.term, "Collected tag information")?;
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
+
+        Ok(self)
+    }
+
+    pub fn execute_prepare_for_collection(mut self) -> Result<CollectionProcess<'t>> {
+        return if let CollectionProcessState::IdleWithCommits(IdleWithCommits {
+            repo,
+            commits,
+            storage,
+        }) = self.state
+        {
+            writeln!(self.term, "Building execution graph")?;
+
+            if !self.disable_cache {
+                self.output.load()?;
+
+                // Fill storage from previous output
+                for commit in &commits {
+                    for (metric_name, metric_config) in &self.metrics {
+                        if let Some(value) = self.output.get_metric(&metric_name, &commit.id)? {
+                            storage.insert(
+                                (metric_config.collector.clone(), commit.id.clone()),
+                                value,
+                            );
+                        }
+                    }
+                }
+            }
+
+            let collection_execution_graph =
+                build_collection_execution_graph(&self.metrics, &commits)?;
+
+            if !self.disable_cache {
+                // Fill storage from cache
+                for nx in collection_execution_graph.graph.node_indices() {
+                    let task = &collection_execution_graph.graph[nx];
+
+                    if let Some(value) = self
+                        .cache
+                        .lookup(&task.collector_config, &task.commit_hash)?
+                    {
+                        storage.insert(
+                            (task.collector_config.clone(), task.commit_hash.clone()),
+                            value,
+                        );
+                    }
+                }
+            }
+
+            self.state = CollectionProcessState::ReadyForCollection(ReadyForCollection {
+                repo,
+                collection_execution_graph,
+                storage,
+            });
+
+            Ok(self)
+        } else {
+            Err(anyhow::anyhow!("Invalid state"))
+        };
+    }
+
+    pub fn execute_collection(mut self) -> Result<CollectionProcess<'t>> {
+        if let CollectionProcessState::ReadyForCollection(ReadyForCollection {
+            repo,
+            collection_execution_graph,
+            storage,
+        }) = self.state
+        {
+            writeln!(self.term, "Collecting data points")?;
+
+            let pb = ProgressBar::new(1);
+            let style =
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+                    .unwrap()
+                    .progress_chars("#>-");
+            pb.set_style(style);
+            pb.enable_steady_tick(Duration::from_millis(100));
+
+            pb.set_length(collection_execution_graph.graph.node_count().try_into()?);
+
+            let new_metric_count = Arc::new(Mutex::new(0));
+            let reused_metric_count = Arc::new(Mutex::new(0));
+
+            let alphabet: [char; 16] = [
+                '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
+            ];
+
+            fs::create_dir_all(&self.worktree_path)?;
+
+            let available_cpus = num_cpus::get();
+
+            let worktree_pool = Arc::new(Pool::new(available_cpus, || {
+                let id = nanoid!(10, &alphabet);
+
+                let handle = repo
+                    .create_temp_worktree(&id, &self.worktree_path.join(&id))
+                    .unwrap();
+
+                handle
+            }));
+
+            // Grouped task by commit, in order of topologial sort
+            let visitor = petgraph::visit::Topo::new(&collection_execution_graph.graph);
+            let node_indices: Vec<Vec<NodeIndex>> = visitor
+                .iter(&collection_execution_graph.graph)
+                .fold(indexmap::IndexMap::new(), |mut acc, current| {
+                    let task = &collection_execution_graph.graph[current];
+                    let entry = acc.entry(task.commit_hash.clone()).or_insert(vec![]);
+                    entry.push(current);
+                    acc
+                })
+                .into_iter()
+                .map(|(_, task_indices)| task_indices)
+                .collect();
+
+            #[cfg(not(feature = "rayon"))]
+            let iter = node_indices.iter();
+            #[cfg(feature = "rayon")]
+            let iter = node_indices.par_iter();
+
+            let disable_cache = self.disable_cache;
+
+            let _: Vec<Result<()>> = iter
             .map(|task_indices| -> Result<()> {
                 for task_idx in task_indices {
                     let task = &collection_execution_graph.graph[*task_idx];
@@ -309,61 +452,117 @@ impl<'t> CollectionProcess<'t> {
             })
             .collect();
 
-        drop(worktree_pool);
+            drop(worktree_pool);
 
-        pb.finish_and_clear();
+            pb.finish_and_clear();
 
-        let reused_metric_count = Arc::try_unwrap(reused_metric_count)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let new_metric_count = Arc::try_unwrap(new_metric_count)
-            .unwrap()
-            .into_inner()
-            .unwrap();
+            let reused_metric_count = Arc::try_unwrap(reused_metric_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            let new_metric_count = Arc::try_unwrap(new_metric_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
 
-        self.term.clear_last_lines(1)?;
-        writeln!(
-            self.term,
-            "Collected {} data points for {} metrics in {:.2}s ({} reused)",
-            new_metric_count + reused_metric_count,
-            self.metrics.len(),
-            pb.elapsed().as_secs_f32(),
-            reused_metric_count
-        )?;
+            self.term.clear_last_lines(1)?;
+            writeln!(
+                self.term,
+                "Collected {} data points for {} metrics in {:.2}s ({} reused)",
+                new_metric_count + reused_metric_count,
+                self.metrics.len(),
+                pb.elapsed().as_secs_f32(),
+                reused_metric_count
+            )?;
 
-        if !self.disable_cache {
-            writeln!(self.term, "Writing data to cache")?;
-            for nx in collection_execution_graph.graph.node_indices() {
-                let task = &collection_execution_graph.graph[nx];
+            self.state = CollectionProcessState::PostCollection(PostCollection {
+                collection_execution_graph,
+                storage,
+            });
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
 
-                if let Some(value) =
-                    storage.get(&(task.collector_config.clone(), task.commit_hash.clone()))
-                {
-                    self.cache
-                        .store(&task.collector_config, &task.commit_hash, &value)?;
+        Ok(self)
+    }
+
+    pub fn execute_write_to_cache(mut self) -> Result<CollectionProcess<'t>> {
+        if let CollectionProcessState::PostCollection(PostCollection {
+            collection_execution_graph,
+            storage,
+        }) = &self.state
+        {
+            if !self.disable_cache {
+                writeln!(self.term, "Writing data to cache")?;
+                for nx in collection_execution_graph.graph.node_indices() {
+                    let task = &collection_execution_graph.graph[nx];
+
+                    if let Some(value) =
+                        storage.get(&(task.collector_config.clone(), task.commit_hash.clone()))
+                    {
+                        self.cache
+                            .store(&task.collector_config, &task.commit_hash, &value)?;
+                    }
+                }
+                self.term.clear_last_lines(1)?;
+                writeln!(self.term, "Wrote data to cache")?;
+            }
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
+
+        Ok(self)
+    }
+
+    pub fn execute_write_to_output(mut self) -> Result<CollectionProcess<'t>> {
+        if let CollectionProcessState::PostCollection(PostCollection {
+            storage,
+            collection_execution_graph: _collection_execution_graph,
+        }) = &self.state
+        {
+            writeln!(self.term, "Writing data to output")?;
+            for v in storage {
+                let (collector, commit) = v.key();
+                let value = v.value();
+
+                let metric_names = self
+                    .metrics
+                    .iter()
+                    .filter(|(_, metric_config)| &metric_config.collector == collector)
+                    .map(|(metric_name, _)| metric_name)
+                    .collect::<Vec<&String>>();
+
+                for metric_name in metric_names {
+                    self.output.set_metric(&metric_name, &commit, &value)?;
                 }
             }
+            self.output.flush()?;
             self.term.clear_last_lines(1)?;
-            writeln!(self.term, "Wrote data to cache")?;
-        }
+            writeln!(self.term, "Wrote data to output")?;
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
 
-        writeln!(self.term, "Writing data to output")?;
-        for ((collector, commit), value) in storage {
-            let metric_names = self
-                .metrics
-                .iter()
-                .filter(|(_, metric_config)| metric_config.collector == collector)
-                .map(|(metric_name, _)| metric_name)
-                .collect::<Vec<&String>>();
+        Ok(self)
+    }
 
-            for metric_name in metric_names {
-                self.output.set_metric(&metric_name, &commit, &value)?;
-            }
-        }
-        self.output.flush()?;
-        self.term.clear_last_lines(1)?;
-        writeln!(self.term, "Wrote data to output")?;
+    pub fn execute(self) -> Result<()> {
+        let process = self.execute_initial()?;
+
+        let process = match process.state {
+            CollectionProcessState::ReadyForFetch(_) => process.execute_fetch()?,
+            CollectionProcessState::ReadyForClone(_) => process.execute_clone()?,
+            _ => return Err(anyhow::anyhow!("Invalid state")),
+        };
+
+        let process = process.execute_collect_commits()?;
+        let process = process.execute_collect_tags()?;
+        let process = process.execute_prepare_for_collection()?;
+        let process = process.execute_collection()?;
+        let process = process.execute_write_to_cache()?;
+        let process = process.execute_write_to_output()?;
+
+        drop(process);
 
         Ok(())
     }

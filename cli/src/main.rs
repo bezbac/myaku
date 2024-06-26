@@ -117,6 +117,8 @@ fn main() -> Result<ExitCode> {
             )?;
 
             let mut process = CollectionProcess {
+                state: myaku::CollectionProcessState::Initial,
+
                 term: &term,
 
                 reference: config.reference,
