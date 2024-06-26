@@ -1,12 +1,15 @@
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::{io::Write, time::Duration};
 
 use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use env_logger::Env;
+use indicatif::{ProgressBar, ProgressStyle};
+use log::debug;
 use myaku::{Cache, CollectionProcess, FileCache, JsonOutput, Output, ParquetOutput};
 use serde::Serialize;
 
@@ -53,7 +56,7 @@ enum Commands {
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    let term = Term::stdout();
+    let mut term = Term::stdout();
 
     env_logger::Builder::from_env(
         Env::default().default_filter_or("warn,tokei::language::language_type=off"),
@@ -116,16 +119,14 @@ fn main() -> Result<ExitCode> {
                 style(&repository_name).underlined()
             )?;
 
-            let mut process = CollectionProcess {
+            let process = CollectionProcess {
                 state: myaku::CollectionProcessState::Initial,
-
-                term: &term,
 
                 reference: config.reference,
 
                 metrics: config.metrics,
 
-                repository_path: reference_dir,
+                repository_path: reference_dir.clone(),
                 worktree_path: worktree_dir,
                 output,
                 cache,
@@ -133,10 +134,196 @@ fn main() -> Result<ExitCode> {
                 disable_cache: *disable_cache,
             };
 
-            if let Err(e) = process.execute() {
-                write_err(&format!("{}", e))?;
-                return Ok(ExitCode::from(1));
-            }
+            let process = process.execute_initial()?;
+
+            let process = match process.state {
+                myaku::CollectionProcessState::ReadyForFetch(_) => {
+                    writeln!(term, "Repository already exists in reference directory")?;
+                    writeln!(term, "Refreshing repository")?;
+                    let process = process.execute_fetch()?;
+                    term.clear_last_lines(1)?;
+                    writeln!(term, "Refreshed repository successfully")?;
+                    process
+                }
+                myaku::CollectionProcessState::ReadyForClone(_) => {
+                    writeln!(term, "Cloning repository into {}", &reference_dir.display())?;
+
+                    let pb = ProgressBar::new(1000);
+                    let style = ProgressStyle::with_template(
+                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                    )
+                    .unwrap()
+                    .progress_chars("#>-");
+                    pb.set_style(style);
+                    pb.enable_steady_tick(Duration::from_millis(100));
+                    pb.set_message("Initializing");
+                    let process = process.execute_clone(|progress| match progress {
+                        myaku::CloneProgress::EnumeratingObjects => {
+                            pb.set_message("Enumerating objects");
+                        }
+                        myaku::CloneProgress::CountingObjects { finished, total } => {
+                            pb.set_message(format!("Counting objects [{}, {}]", finished, total));
+                            pb.set_length(*total as u64);
+                            pb.set_position(*finished as u64);
+                        }
+                        myaku::CloneProgress::CompressingObjects { finished, total } => {
+                            pb.set_message(format!(
+                                "Compressing objects [{}, {}]",
+                                finished, total
+                            ));
+                            pb.set_length(*total as u64);
+                            pb.set_position(*finished as u64);
+                        }
+                        myaku::CloneProgress::ReceivingObjects { finished, total } => {
+                            pb.set_message(format!("Receiving objects [{}, {}]", finished, total));
+                            pb.set_length(*total as u64);
+                            pb.set_position(*finished as u64);
+                        }
+                        myaku::CloneProgress::ResolvingDeltas { finished, total } => {
+                            pb.set_message(format!("Resolving deltas [{}, {}]", finished, total));
+                            pb.set_length(*total as u64);
+                            pb.set_position(*finished as u64);
+                        }
+                    })?;
+                    pb.finish_and_clear();
+                    term.clear_last_lines(1)?;
+                    writeln!(
+                        term,
+                        "Successfully cloned repository into {}",
+                        &reference_dir.display()
+                    )?;
+
+                    process
+                }
+                _ => return Err(anyhow::anyhow!("Invalid state")),
+            };
+
+            writeln!(term, "Collecting commit information")?;
+            let process = process.execute_collect_commits()?;
+            term.clear_last_lines(1)?;
+            writeln!(term, "Collected commit information")?;
+
+            writeln!(term, "Collecting tag information")?;
+            let process = process.execute_collect_tags()?;
+            term.clear_last_lines(1)?;
+            writeln!(term, "Collected tag information")?;
+
+            writeln!(term, "Building execution graph")?;
+            let process = process.execute_prepare_for_collection()?;
+            term.clear_last_lines(1)?;
+            writeln!(term, "Built execution graph")?;
+
+            writeln!(term, "Collecting data points")?;
+            let pb = ProgressBar::new(1);
+            let style =
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+                    .unwrap()
+                    .progress_chars("#>-");
+            pb.set_style(style);
+            pb.enable_steady_tick(Duration::from_millis(100));
+
+            let (tx, rx) = std::sync::mpsc::channel::<myaku::ExecutionProgressCallbackState>();
+
+            let metric_count = Arc::new(Mutex::new(0 as usize));
+            let fresh_task_count = Arc::new(Mutex::new(0 as usize));
+            let reused_task_count = Arc::new(Mutex::new(0 as usize));
+
+            let movable_pb = pb.clone();
+            let movable_metric_count = metric_count.clone();
+            let movable_fresh_task_count = fresh_task_count.clone();
+            let movable_reused_task_count = reused_task_count.clone();
+
+            let reader = std::thread::spawn(move || {
+                let pb = movable_pb;
+                let metric_count = movable_metric_count;
+                let fresh_task_count = movable_fresh_task_count;
+                let reused_task_count = movable_reused_task_count;
+
+                while let Result::Ok(state) = rx.recv() {
+                    match state {
+                        myaku::ExecutionProgressCallbackState::Initial {
+                            task_count,
+                            metric_count: mcount,
+                        } => {
+                            let mut metric_count_lock = metric_count.lock().unwrap();
+                            *metric_count_lock = mcount;
+                            drop(metric_count_lock);
+                            pb.set_length(task_count as u64);
+                        }
+                        myaku::ExecutionProgressCallbackState::Reused {
+                            collector_config,
+                            commit_hash,
+                        } => {
+                            debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", collector_config, commit_hash);
+                            let mut reused_task_count_lock = reused_task_count.lock().unwrap();
+                            *reused_task_count_lock += 1;
+                            drop(reused_task_count_lock);
+                        }
+                        myaku::ExecutionProgressCallbackState::New {
+                            collector_config: _,
+                            commit_hash: _,
+                        } => {
+                            let mut fresh_task_count_lock = fresh_task_count.lock().unwrap();
+                            *fresh_task_count_lock += 1;
+                            drop(fresh_task_count_lock);
+                        }
+                        myaku::ExecutionProgressCallbackState::Finished => {}
+                    }
+
+                    let reused_task_count_lock = reused_task_count.lock().unwrap();
+                    let reused_task_count = *reused_task_count_lock;
+                    drop(reused_task_count_lock);
+
+                    let fresh_task_count_lock = fresh_task_count.lock().unwrap();
+                    let fresh_task_count = *fresh_task_count_lock;
+                    drop(fresh_task_count_lock);
+
+                    pb.inc(1);
+                    pb.set_message(format!(
+                        "{} collected ({} reused)",
+                        fresh_task_count + reused_task_count,
+                        reused_task_count
+                    ));
+                }
+            });
+
+            let process = process.execute_collection(tx)?;
+
+            reader
+                .join()
+                .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
+
+            pb.finish_and_clear();
+            let metric_count = Arc::try_unwrap(metric_count).unwrap().into_inner().unwrap();
+            let reused_task_count = Arc::try_unwrap(reused_task_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            let fresh_task_count = Arc::try_unwrap(fresh_task_count)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            term.clear_last_lines(1)?;
+            writeln!(
+                term,
+                "Collected {} data points for {} metrics in {:.2}s ({} reused)",
+                fresh_task_count + reused_task_count,
+                metric_count,
+                pb.elapsed().as_secs_f32(),
+                reused_task_count
+            )?;
+
+            writeln!(term, "Writing data to cache")?;
+            let process = process.execute_write_to_cache()?;
+            term.clear_last_lines(1)?;
+            writeln!(term, "Wrote data to cache")?;
+
+            writeln!(term, "Writing data to output")?;
+            let process = process.execute_write_to_output()?;
+            term.clear_last_lines(1)?;
+            writeln!(term, "Wrote data to output")?;
+
+            drop(process);
         }
         None => {}
     }
