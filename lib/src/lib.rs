@@ -14,6 +14,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use tracing::{debug, span, Level};
 
 use crate::git::clone_repository;
 use crate::git::CommitHash;
@@ -345,11 +346,15 @@ impl ReadyForCollection {
                 for task_idx in task_indices {
                     let task = &self.collection_execution_graph.graph[*task_idx];
 
+                    let _enter =
+                        span!(Level::TRACE, "processing task", idx = ?task_idx, commit = ?task.commit_hash).entered();
+
                     let is_in_storage = self
                         .storage
                         .contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
 
                     if is_in_storage && disable_cache == false {
+                        debug!("reusing value from storage");
                         if let Some(channel) = &channel {
                             channel.send(ExecutionProgressCallbackState::Reused {
                                 collector_config: task.collector_config.clone(),
@@ -369,7 +374,6 @@ impl ReadyForCollection {
                                 let mut worktree = temp_worktree.as_mut();
 
                                 worktree.reset_hard(&task.commit_hash.0)?;
-
                                 collector.collect(
                                     &self.storage,
                                     &mut worktree,
