@@ -394,7 +394,7 @@ fn main() -> Result<ExitCode> {
                     }
                 });
 
-                let process = process.collect_metrics(tx)?;
+                let process = process.collect_metrics(Some(tx))?;
 
                 reader
                     .join()

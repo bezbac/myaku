@@ -28,7 +28,7 @@ mod graph;
 mod output;
 
 pub use cache::{Cache, FileCache};
-pub use config::{CollectorConfig, GitRepository, MetricConfig};
+pub use config::{CollectorConfig, Frequency, GitRepository, MetricConfig};
 pub use git::CloneProgress;
 pub use output::{JsonOutput, Output, ParquetOutput};
 
@@ -159,6 +159,10 @@ impl Initial {
             }
         };
     }
+
+    pub fn to_process(self) -> CollectionProcess {
+        CollectionProcess::Initial(self)
+    }
 }
 
 impl ReadyForFetch {
@@ -283,7 +287,7 @@ impl ReadyForCollection {
     #[tracing::instrument(level = "trace", skip(self, channel))]
     pub fn collect_metrics(
         self,
-        channel: std::sync::mpsc::Sender<ExecutionProgressCallbackState>,
+        channel: Option<std::sync::mpsc::Sender<ExecutionProgressCallbackState>>,
     ) -> Result<PostCollection> {
         let alphabet: [char; 16] = [
             '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -325,14 +329,16 @@ impl ReadyForCollection {
 
         let disable_cache = self.shared.disable_cache;
 
-        channel.send(ExecutionProgressCallbackState::Initial {
-            metric_count: self.shared.metrics.len(),
-            task_count: self
-                .collection_execution_graph
-                .graph
-                .node_count()
-                .try_into()?,
-        })?;
+        if let Some(channel) = &channel {
+            channel.send(ExecutionProgressCallbackState::Initial {
+                metric_count: self.shared.metrics.len(),
+                task_count: self
+                    .collection_execution_graph
+                    .graph
+                    .node_count()
+                    .try_into()?,
+            })?;
+        }
 
         let _: Vec<Result<()>> = iter
             .map(|task_indices| -> Result<()> {
@@ -344,10 +350,12 @@ impl ReadyForCollection {
                         .contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
 
                     if is_in_storage && disable_cache == false {
-                        channel.send(ExecutionProgressCallbackState::Reused {
-                            collector_config: task.collector_config.clone(),
-                            commit_hash: task.commit_hash.clone(),
-                        })?;
+                        if let Some(channel) = &channel {
+                            channel.send(ExecutionProgressCallbackState::Reused {
+                                collector_config: task.collector_config.clone(),
+                                commit_hash: task.commit_hash.clone(),
+                            })?;
+                        }
                     } else {
                         let collector: Collector = (&task.collector_config).into();
 
@@ -381,10 +389,12 @@ impl ReadyForCollection {
                             output.clone(),
                         );
 
-                        channel.send(ExecutionProgressCallbackState::New {
-                            collector_config: task.collector_config.clone(),
-                            commit_hash: task.commit_hash.clone(),
-                        })?;
+                        if let Some(channel) = &channel {
+                            channel.send(ExecutionProgressCallbackState::New {
+                                collector_config: task.collector_config.clone(),
+                                commit_hash: task.commit_hash.clone(),
+                            })?;
+                        }
                     }
                 }
 
@@ -394,7 +404,9 @@ impl ReadyForCollection {
 
         drop(worktree_pool);
 
-        channel.send(ExecutionProgressCallbackState::Finished)?;
+        if let Some(channel) = &channel {
+            channel.send(ExecutionProgressCallbackState::Finished)?;
+        }
 
         Ok(PostCollection {
             shared: self.shared,
@@ -451,4 +463,30 @@ impl PostCollection {
     }
 }
 
-impl CollectionProcess {}
+impl CollectionProcess {
+    pub fn run_to_completion(self) -> Result<()> {
+        let process = if let CollectionProcess::Initial(process) = self {
+            process
+        } else {
+            return Err(anyhow::anyhow!("Invalid state"));
+        };
+
+        let process = process.initialize()?;
+
+        let process = match process {
+            CollectionProcess::ReadyForFetch(process) => process.fetch()?,
+            CollectionProcess::ReadyForClone(process) => process.clone(|_| {})?,
+            _ => return Err(anyhow::anyhow!("Invalid state")),
+        };
+
+        process
+            .collect_commits()?
+            .collect_tags()?
+            .prepare_for_collection()?
+            .collect_metrics(None)?
+            .write_to_cache()?
+            .write_to_output()?;
+
+        Ok(())
+    }
+}
