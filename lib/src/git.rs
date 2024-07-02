@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     fmt::Formatter,
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -82,7 +82,7 @@ impl<'r> Drop for TempWorktreeHandle<'r> {
         self.worktree
             .repo
             .remove_worktree(&self.worktree.name, Some(true))
-            .unwrap()
+            .unwrap();
     }
 }
 
@@ -110,9 +110,11 @@ impl From<&RepositoryHandle> for Repository {
 }
 
 impl RepositoryHandle {
-    pub fn open(path: &PathBuf) -> Result<RepositoryHandle> {
+    pub fn open(path: &Path) -> Result<RepositoryHandle> {
         if path.join(".git").exists() {
-            return Ok(RepositoryHandle { path: path.clone() });
+            return Ok(RepositoryHandle {
+                path: path.to_path_buf(),
+            });
         }
 
         Err(anyhow::anyhow!(".git directory does not exist"))
@@ -143,7 +145,7 @@ impl RepositoryHandle {
 
         let mut found = Option::None;
         for attempt in &["master", "main", "dev", "development", "develop"] {
-            match git2_repo.find_branch(&format!("origin/{}", attempt), git2::BranchType::Remote) {
+            match git2_repo.find_branch(&format!("origin/{attempt}"), git2::BranchType::Remote) {
                 Result::Ok(_) => {
                     debug!("Found branch {attempt} in repository");
                     found = Some(attempt);
@@ -156,12 +158,12 @@ impl RepositoryHandle {
         }
 
         found
-            .map(|v| v.to_string())
+            .map(|v| (*v).to_string())
             .ok_or(anyhow::anyhow!("Could not determine mainline branch"))
     }
 
     pub fn reset_hard(&self, revstring: &str) -> Result<()> {
-        let main_worktree = self.main_worktree()?;
+        let main_worktree = self.main_worktree();
         main_worktree.reset_hard(revstring)
     }
 
@@ -183,7 +185,7 @@ impl RepositoryHandle {
                 committer: commit.committer().into(),
                 message: commit.message().map(|v| v.to_string()),
                 time: commit.time().seconds(),
-            })
+            });
         }
 
         Ok(commits)
@@ -208,29 +210,24 @@ impl RepositoryHandle {
                 tag_name
             ))?;
 
-            let tag = match git2_repo.find_tag(tag_id) {
-                Ok(tag) => tag,
-                Err(_) => {
-                    // The tag id might point to a commit
+            let Ok(tag) = git2_repo.find_tag(tag_id) else {
+                // The tag id might point to a commit
 
-                    let commit = git2_repo.find_commit(tag_id);
+                let commit = git2_repo.find_commit(tag_id);
 
-                    if let Some(commit) = commit.ok() {
-                        tags.push(CommitTagInfo {
-                            name: tag_name.to_string(),
-                            commit: commit.id().into(),
-                        });
-                    }
-
-                    continue;
+                if let Ok(commit) = commit {
+                    tags.push(CommitTagInfo {
+                        name: tag_name.to_string(),
+                        commit: commit.id().into(),
+                    });
                 }
+
+                continue;
             };
 
             let commit_id = tag.target_id();
-
-            let commit = match git2_repo.find_commit(commit_id) {
-                Ok(commit) => commit,
-                Err(_) => continue,
+            let Ok(commit) = git2_repo.find_commit(commit_id) else {
+                continue;
             };
 
             tags.push(CommitTagInfo {
@@ -243,19 +240,19 @@ impl RepositoryHandle {
     }
 
     pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
-        let main_worktree = self.main_worktree()?;
+        let main_worktree = self.main_worktree();
         main_worktree.get_current_total_diff_stat()
     }
 
     pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>> {
-        let main_worktree = self.main_worktree()?;
+        let main_worktree = self.main_worktree();
         main_worktree.get_current_changed_file_paths()
     }
 
     pub fn create_worktree(
         &self,
         worktree_name: &str,
-        worktree_path: &PathBuf,
+        worktree_path: &Path,
     ) -> Result<WorktreeHandle> {
         let git2_repo: Repository = self.into();
 
@@ -264,29 +261,27 @@ impl RepositoryHandle {
         let handle = WorktreeHandle {
             repo: self,
             name: worktree_name.to_string(),
-            path: worktree_path.clone(),
+            path: worktree_path.to_path_buf(),
         };
 
         Ok(handle)
     }
 
-    pub fn main_worktree<'r>(&'r self) -> Result<WorktreeHandle<'r>> {
+    pub fn main_worktree(&self) -> WorktreeHandle<'_> {
         // TODO: Find the real name here
         let main_worktree_name = String::from("main");
 
-        let worktree = WorktreeHandle {
+        WorktreeHandle {
             repo: self,
             name: main_worktree_name.to_string(),
             path: self.path.clone(),
-        };
-
-        Ok(worktree)
+        }
     }
 
     pub fn create_temp_worktree(
         &self,
         worktree_name: &str,
-        worktree_path: &PathBuf,
+        worktree_path: &Path,
     ) -> Result<TempWorktreeHandle> {
         let worktree = self.create_worktree(worktree_name, worktree_path)?;
         Ok(TempWorktreeHandle { worktree })
@@ -320,7 +315,7 @@ impl<'r> WorktreeHandle<'r> {
     pub fn reset_hard(&self, revstring: &str) -> Result<()> {
         let git2_repo: Repository = self.into();
 
-        let (object, _) = git2_repo.revparse_ext(&revstring)?;
+        let (object, _) = git2_repo.revparse_ext(revstring)?;
         git2_repo.checkout_tree(&object, None)?;
         git2_repo.set_head_detached(object.id())?;
 
@@ -357,14 +352,14 @@ impl<'r> WorktreeHandle<'r> {
     }
 }
 
-fn get_current_diff_to_parent<'r>(repo: &'r Repository) -> Result<Diff<'r>> {
+fn get_current_diff_to_parent(repo: &Repository) -> Result<Diff<'_>> {
     // To diff the first commit in a repository, we need something to diff it against other than it's parent
     // This object is the empty tree. See https://stackoverflow.com/a/40884093 for more details.
     let empty_tree = repo.find_tree(Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?)?;
 
-    let t1 = tree_to_treeish(&repo, Some(&"HEAD^".to_string()))
-        .unwrap_or(Some(empty_tree.into_object()));
-    let t2 = tree_to_treeish(&repo, Some(&"HEAD".to_string()))?;
+    let t1 =
+        tree_to_treeish(repo, Some(&"HEAD^".to_string())).unwrap_or(Some(empty_tree.into_object()));
+    let t2 = tree_to_treeish(repo, Some(&"HEAD".to_string()))?;
 
     let diff = repo.diff_tree_to_tree(
         t1.unwrap().as_tree(),
@@ -372,17 +367,17 @@ fn get_current_diff_to_parent<'r>(repo: &'r Repository) -> Result<Diff<'r>> {
         Some(&mut DiffOptions::new()),
     )?;
 
-    return Ok(diff);
+    Ok(diff)
 }
 
 fn tree_to_treeish<'a>(
     repo: &'a Repository,
     arg: Option<&String>,
 ) -> Result<Option<Object<'a>>, git2::Error> {
-    let arg = match arg {
-        Some(s) => s,
-        None => return Ok(None),
+    let Some(arg) = arg else {
+        return Ok(None);
     };
+
     let obj = repo.revparse_single(arg)?;
     let tree = obj.peel(ObjectType::Tree)?;
     Ok(Some(tree))
@@ -415,10 +410,10 @@ impl CloneProgress {
                 .ok_or(anyhow::anyhow!("Could not find progress in line"))?;
 
             let (finished, total) = {
-                let mut tmp = progress.as_str().split("(");
+                let mut tmp = progress.as_str().split('(');
                 tmp.next();
-                let tmp = tmp.next().unwrap().replace(")", "");
-                let mut parts = tmp.split("/");
+                let tmp = tmp.next().unwrap().replace(')', "");
+                let mut parts = tmp.split('/');
                 let finished = parts.next().unwrap().parse::<usize>()?;
                 let total = parts.next().unwrap().parse::<usize>()?;
                 (finished, total)
@@ -441,10 +436,10 @@ impl CloneProgress {
             }
         }
 
-        return Err(anyhow::anyhow!(
+        Err(anyhow::anyhow!(
             "Could not parse git progress from line: {}",
             line
-        ));
+        ))
     }
 }
 
@@ -488,7 +483,7 @@ impl<R: std::io::Read> Iterator for DelimitedBy<R> {
                         .take_while(|c| !self.delimiters.contains(*c))
                         .count();
 
-                    if buffer.len() == 0 {
+                    if buffer.is_empty() {
                         return None;
                     }
 
@@ -538,7 +533,7 @@ impl<R> From<BufReader<R>> for BufReaderWithDelimitedBy<R> {
 pub fn clone_repository(
     url: &str,
     directory: &PathBuf,
-    progress_callback: impl Fn(&CloneProgress) -> (),
+    progress_callback: impl Fn(&CloneProgress),
 ) -> Result<RepositoryHandle> {
     let mut command = Command::new(GIT_BINARY_PATH);
     command.arg("clone");

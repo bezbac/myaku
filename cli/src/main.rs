@@ -174,7 +174,7 @@ fn main() -> Result<ExitCode> {
                 style(&config_path.display()).underlined()
             )?;
 
-            if config.metrics.len() == 0 {
+            if config.metrics.is_empty() {
                 error!("No metrics configured, please add some to your config file")?;
                 return Ok(ExitCode::from(1));
             }
@@ -266,25 +266,22 @@ fn main() -> Result<ExitCode> {
                             pb.set_message("Enumerating objects");
                         }
                         myaku::CloneProgress::CountingObjects { finished, total } => {
-                            pb.set_message(format!("Counting objects [{}, {}]", finished, total));
+                            pb.set_message(format!("Counting objects [{finished}, {total}]"));
                             pb.set_length(*total as u64);
                             pb.set_position(*finished as u64);
                         }
                         myaku::CloneProgress::CompressingObjects { finished, total } => {
-                            pb.set_message(format!(
-                                "Compressing objects [{}, {}]",
-                                finished, total
-                            ));
+                            pb.set_message(format!("Compressing objects [{finished}, {total}]",));
                             pb.set_length(*total as u64);
                             pb.set_position(*finished as u64);
                         }
                         myaku::CloneProgress::ReceivingObjects { finished, total } => {
-                            pb.set_message(format!("Receiving objects [{}, {}]", finished, total));
+                            pb.set_message(format!("Receiving objects [{finished}, {total}]"));
                             pb.set_length(*total as u64);
                             pb.set_position(*finished as u64);
                         }
                         myaku::CloneProgress::ResolvingDeltas { finished, total } => {
-                            pb.set_message(format!("Resolving deltas [{}, {}]", finished, total));
+                            pb.set_message(format!("Resolving deltas [{finished}, {total}]",));
                             pb.set_length(*total as u64);
                             pb.set_position(*finished as u64);
                         }
@@ -331,9 +328,9 @@ fn main() -> Result<ExitCode> {
 
                 let (tx, rx) = std::sync::mpsc::channel::<myaku::ExecutionProgressCallbackState>();
 
-                let metric_count = Arc::new(Mutex::new(0 as usize));
-                let fresh_task_count = Arc::new(Mutex::new(0 as usize));
-                let reused_task_count = Arc::new(Mutex::new(0 as usize));
+                let metric_count = Arc::new(Mutex::new(0_usize));
+                let fresh_task_count = Arc::new(Mutex::new(0_usize));
+                let reused_task_count = Arc::new(Mutex::new(0_usize));
 
                 let movable_pb = pb.clone();
                 let movable_metric_count = metric_count.clone();

@@ -21,7 +21,7 @@ impl DerivedCollector for TotalLoc {
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let loc_value: LocValue = get_value_of_preceeding_node(
             storage,
@@ -33,7 +33,7 @@ impl DerivedCollector for TotalLoc {
         .try_into()?;
 
         let value = TotalLocValue {
-            loc: loc_value.loc_by_language.values().sum::<usize>() as u32,
+            loc: u32::try_from(loc_value.loc_by_language.values().sum::<usize>())?,
         };
 
         Ok(value.into())

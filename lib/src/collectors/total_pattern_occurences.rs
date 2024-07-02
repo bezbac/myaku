@@ -26,7 +26,7 @@ impl DerivedCollector for TotalPatternOccurences {
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let pattern_occurences_value: PatternOccurencesValue = get_value_of_preceeding_node(
             storage,
@@ -43,7 +43,7 @@ impl DerivedCollector for TotalPatternOccurences {
         .try_into()?;
 
         let value = TotalPatternOccurencesValue {
-            total_occurences: pattern_occurences_value.matches.len() as u32,
+            total_occurences: u32::try_from(pattern_occurences_value.matches.len())?,
         };
 
         Ok(value.into())

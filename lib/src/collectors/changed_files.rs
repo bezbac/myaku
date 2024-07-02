@@ -28,7 +28,7 @@ impl BaseCollector for ChangedFiles {
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
-        _current_node_idx: &NodeIndex,
+        _current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let files_changed_in_current_commit = repo.get_current_changed_file_paths()?;
         let value = ChangedFilesValue {

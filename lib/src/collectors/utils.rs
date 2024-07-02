@@ -11,12 +11,12 @@ use super::CollectorValue;
 
 fn find_incoming_edges<F: Fn(&CollectionGraphEdge) -> bool>(
     graph: &CollectionExecutionGraph,
-    current_node_idx: &NodeIndex,
+    current_node_idx: NodeIndex,
     predicate: F,
 ) -> Vec<EdgeIndex> {
     let mut edge_walker = graph
         .graph
-        .neighbors_directed(current_node_idx.clone(), petgraph::Direction::Incoming)
+        .neighbors_directed(current_node_idx, petgraph::Direction::Incoming)
         .detach();
 
     let mut result = Vec::new();
@@ -37,7 +37,7 @@ pub fn find_preceding_node<
     NP: Fn(&CollectionTask) -> bool,
 >(
     graph: &CollectionExecutionGraph,
-    current_node_idx: &NodeIndex,
+    current_node_idx: NodeIndex,
     edge_predicate: EP,
     node_predicate: NP,
 ) -> Option<NodeIndex> {
@@ -47,7 +47,7 @@ pub fn find_preceding_node<
     for edge_idx in incoming_edges_matching_predicate {
         let endpoints = graph.graph.edge_endpoints(edge_idx);
 
-        if !endpoints.is_some() {
+        if endpoints.is_none() {
             continue;
         }
 
@@ -65,22 +65,16 @@ pub fn find_preceding_node<
 pub fn get_previous_commit_value_of_collector(
     storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
     graph: &CollectionExecutionGraph,
-    current_node_idx: &NodeIndex,
+    current_node_idx: NodeIndex,
 ) -> Option<CollectorValue> {
-    let current_node = &graph.graph[*current_node_idx];
+    let current_node = &graph.graph[current_node_idx];
 
     let previous_node_index = find_preceding_node(
         graph,
         current_node_idx,
         |e| e.distance == 1,
         |n| n.collector_config == current_node.collector_config,
-    );
-
-    if previous_node_index.is_none() {
-        return None;
-    }
-
-    let previous_node_index = previous_node_index.unwrap();
+    )?;
 
     let previous_node = &graph.graph[previous_node_index];
 
@@ -89,10 +83,7 @@ pub fn get_previous_commit_value_of_collector(
         previous_node.commit_hash.clone(),
     ));
 
-    match value {
-        Some(value) => Some(value.clone()),
-        None => None,
-    }
+    value.map(|v| v.clone())
 }
 
 pub fn get_value_of_preceeding_node<
@@ -101,16 +92,13 @@ pub fn get_value_of_preceeding_node<
 >(
     storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
     graph: &CollectionExecutionGraph,
-    current_node_idx: &NodeIndex,
+    current_node_idx: NodeIndex,
     edge_predicate: EP,
     node_predicate: NP,
 ) -> anyhow::Result<CollectorValue> {
     let task_idx = find_preceding_node(graph, current_node_idx, edge_predicate, node_predicate)
         .unwrap_or_else(|| {
-            panic!(
-                "Could not find required dependency task for node {:?}",
-                current_node_idx
-            )
+            panic!("Could not find required dependency task for node {current_node_idx:?}",)
         });
 
     let task = &graph.graph[task_idx];

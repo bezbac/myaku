@@ -46,8 +46,11 @@ pub struct JsonOutput {
 }
 
 impl JsonOutput {
-    pub fn new(base: &PathBuf) -> Self {
-        Self { base: base.clone() }
+    #[must_use]
+    pub fn new(base: &Path) -> Self {
+        Self {
+            base: base.to_path_buf(),
+        }
     }
 }
 
@@ -80,7 +83,7 @@ impl Output for JsonOutput {
 
         let value: CollectorValue = serde_json::from_str(&contents)?;
 
-        return Ok(Some(value));
+        Ok(Some(value))
     }
 
     fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
@@ -149,9 +152,10 @@ pub struct ParquetOutput {
 }
 
 impl ParquetOutput {
-    pub fn new(base: &PathBuf) -> Self {
+    #[must_use]
+    pub fn new(base: &Path) -> Self {
         Self {
-            base: base.clone(),
+            base: base.to_path_buf(),
             metrics: HashMap::default(),
         }
     }
@@ -166,7 +170,7 @@ impl ParquetOutput {
         self.get_metric_dir(metric_name).join("data.parquet")
     }
 
-    fn get_writer_props(&self) -> WriterProperties {
+    fn get_writer_props() -> WriterProperties {
         WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
             .build()
@@ -178,9 +182,7 @@ impl Output for ParquetOutput {
         Ok(self
             .metrics
             .get(metric_name)
-            .map(|metric| metric.get(commit))
-            .flatten()
-            .map(|value| value.clone()))
+            .and_then(|metric| metric.get(commit).cloned()))
     }
 
     fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
@@ -201,7 +203,11 @@ impl Output for ParquetOutput {
 
         let batch = serde_arrow::to_record_batch(&fields, &commits)?;
 
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(self.get_writer_props()))?;
+        let mut writer = ArrowWriter::try_new(
+            file,
+            batch.schema(),
+            Some(ParquetOutput::get_writer_props()),
+        )?;
 
         writer.write(&batch)?;
         writer.close()?;
@@ -227,7 +233,11 @@ impl Output for ParquetOutput {
 
         let batch = serde_arrow::to_record_batch(&fields, &commit_tags)?;
 
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(self.get_writer_props()))?;
+        let mut writer = ArrowWriter::try_new(
+            file,
+            batch.schema(),
+            Some(ParquetOutput::get_writer_props()),
+        )?;
 
         writer.write(&batch)?;
         writer.close()?;
@@ -248,11 +258,11 @@ impl Output for ParquetOutput {
 
     fn flush(&self) -> Result<()> {
         for (metric_name, values) in &self.metrics {
-            if values.len() < 1 {
+            if values.is_empty() {
                 continue;
             }
 
-            let file_path = self.get_metric_file(&metric_name);
+            let file_path = self.get_metric_file(metric_name);
 
             if let Some(parent) = file_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -262,8 +272,11 @@ impl Output for ParquetOutput {
 
             let record_batch = values_to_record_batch(values)?;
 
-            let mut writer =
-                ArrowWriter::try_new(file, record_batch.schema(), Some(self.get_writer_props()))?;
+            let mut writer = ArrowWriter::try_new(
+                file,
+                record_batch.schema(),
+                Some(ParquetOutput::get_writer_props()),
+            )?;
 
             writer.write(&record_batch)?;
             writer.close()?;
@@ -307,9 +320,7 @@ macro_rules! to_batch {
 fn values_to_record_batch(values: &HashMap<CommitHash, CollectorValue>) -> Result<RecordBatch> {
     let mut commits = Vec::new();
 
-    let first_record = if let Some(first_record) = values.values().next() {
-        first_record
-    } else {
+    let Some(first_record) = values.values().next() else {
         return Err(anyhow::anyhow!("No values to convert"));
     };
 
@@ -351,14 +362,14 @@ fn values_to_record_batch(values: &HashMap<CommitHash, CollectorValue>) -> Resul
     );
 
     let commit_fields: Vec<Arc<Field>> = vec![Arc::new(commit_field)];
-    let data_fields: Vec<Arc<Field>> = batch.schema().fields().iter().cloned().collect();
-    let combined_fields: Vec<Arc<Field>> = vec![commit_fields, data_fields].concat();
+    let data_fields: Vec<Arc<Field>> = batch.schema().fields().to_vec();
+    let combined_fields: Vec<Arc<Field>> = [commit_fields, data_fields].concat();
 
     let combined_schema = Schema::new(combined_fields);
 
     let commit_arrays: Vec<ArrayRef> = vec![Arc::new(commit_array)];
-    let data_arrays: Vec<ArrayRef> = batch.columns().into_iter().cloned().collect();
-    let combined_arrays: Vec<ArrayRef> = vec![commit_arrays, data_arrays].concat();
+    let data_arrays: Vec<ArrayRef> = batch.columns().to_vec();
+    let combined_arrays: Vec<ArrayRef> = [commit_arrays, data_arrays].concat();
 
     let combined_batch = RecordBatch::try_new(Arc::new(combined_schema), combined_arrays).unwrap();
 

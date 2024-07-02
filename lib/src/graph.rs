@@ -35,7 +35,7 @@ pub fn add_task(
     if let Some(node_idx) =
         created_tasks.get(&(collector_config.clone(), current_commit_hash.clone()))
     {
-        return Ok(node_idx.clone());
+        return Ok(*node_idx);
     }
 
     let node_idx = graph.add_node(CollectionTask {
@@ -105,7 +105,7 @@ pub fn add_task(
             created_tasks.get(&(collector_config.clone(), previous_commit_hash.clone()))
         {
             graph.add_edge(
-                last_commit_task_idx.clone(),
+                *last_commit_task_idx,
                 node_idx,
                 CollectionGraphEdge { distance: 1 },
             );
@@ -134,7 +134,7 @@ pub fn build_collection_execution_graph(
 
         let current_commit_hash = &current_commit.id;
 
-        for (_, metric_config) in metrics {
+        for metric_config in metrics.values() {
             add_task(
                 &mut graph,
                 &mut created_tasks,

@@ -113,7 +113,7 @@ pub trait BaseCollector {
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue>;
 }
 
@@ -122,7 +122,7 @@ pub trait DerivedCollector {
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue>;
 }
 

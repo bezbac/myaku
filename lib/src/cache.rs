@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Result;
@@ -30,8 +30,11 @@ pub struct FileCache {
 }
 
 impl FileCache {
-    pub fn new(base: &PathBuf) -> Self {
-        Self { base: base.clone() }
+    #[must_use]
+    pub fn new(base: &Path) -> Self {
+        Self {
+            base: base.to_path_buf(),
+        }
     }
 }
 
@@ -45,7 +48,7 @@ impl FileCache {
             let mut hasher = Sha1::new();
             hasher.update(serde_json::to_string(collector_config)?);
             let bytes = hasher.finalize();
-            format!("{:x}", bytes)
+            format!("{bytes:x}")
         };
 
         let mut path = self
@@ -81,7 +84,7 @@ impl Cache for FileCache {
 
         let value: CollectorValue = serde_json::from_str(&contents)?;
 
-        return Ok(Some(value));
+        Ok(Some(value))
     }
 
     fn store(

@@ -29,13 +29,13 @@ impl BaseCollector for Loc {
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
-        _current_node_idx: &NodeIndex,
+        _current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let mut languages = Languages::new();
         languages.get_statistics(&[&repo.path], &[".git"], &tokei::Config::default());
         let value: BTreeMap<LanguageType, usize> = languages
             .iter()
-            .map(|(lang, info)| (lang.clone(), info.code))
+            .map(|(lang, info)| (*lang, info.code))
             .filter(|(_, value)| *value > 0)
             .collect();
 

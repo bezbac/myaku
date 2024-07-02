@@ -28,14 +28,14 @@ impl BaseCollector for TotalDiffStat {
         _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         _graph: &CollectionExecutionGraph,
-        _current_node_idx: &NodeIndex,
+        _current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let (files_changed, insertions, deletions) = repo.get_current_total_diff_stat().unwrap();
 
         let value = TotalDiffStatValue {
-            files_changed: files_changed as u32,
-            insertions: insertions as u32,
-            deletions: deletions as u32,
+            files_changed: u32::try_from(files_changed)?,
+            insertions: u32::try_from(insertions)?,
+            deletions: u32::try_from(deletions)?,
         };
 
         Ok(value.into())

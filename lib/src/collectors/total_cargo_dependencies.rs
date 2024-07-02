@@ -62,7 +62,7 @@ impl BaseCollector for TotalCargoDependencies {
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let changed_files_in_current_commit_value: ChangedFilesValue =
             get_value_of_preceeding_node(
@@ -95,7 +95,7 @@ impl BaseCollector for TotalCargoDependencies {
             })
             .collect();
 
-        if modified_cargo_toml_paths.len() < 1 && modified_cargo_lock_paths.len() < 1 {
+        if modified_cargo_toml_paths.is_empty() && modified_cargo_lock_paths.is_empty() {
             let previous_commit_value =
                 get_previous_commit_value_of_collector(storage, graph, current_node_idx);
 
@@ -144,7 +144,7 @@ impl BaseCollector for TotalCargoDependencies {
             .count();
 
         let value = TotalCargoDependenciesValue {
-            total_dependencies: dep_count as u32,
+            total_dependencies: u32::try_from(dep_count)?,
         };
 
         Ok(value.into())

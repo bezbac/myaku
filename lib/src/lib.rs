@@ -126,21 +126,22 @@ pub enum ExecutionProgressCallbackState {
 }
 
 impl Initial {
+    #[must_use]
     pub fn new(shared: SharedCollectionProcessState) -> Self {
         Self { shared }
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn initialize(self) -> Result<CollectionProcess> {
-        if self.shared.metrics.len() < 1 {
+        if self.shared.metrics.is_empty() {
             return Err(anyhow::anyhow!("No metrics configured"));
         }
 
         let reference_dir = &self.shared.repository_path;
 
-        fs::create_dir_all(&reference_dir)?;
+        fs::create_dir_all(reference_dir)?;
 
-        return match RepositoryHandle::open(&reference_dir) {
+        return match RepositoryHandle::open(reference_dir) {
             Result::Ok(repo) => {
                 let remote_url = repo.remote_url()?;
                 if remote_url != self.shared.reference.url {
@@ -161,6 +162,7 @@ impl Initial {
         };
     }
 
+    #[must_use]
     pub fn to_process(self) -> CollectionProcess {
         CollectionProcess::Initial(self)
     }
@@ -187,7 +189,7 @@ impl ReadyForFetch {
 
 impl ReadyForClone {
     #[tracing::instrument(level = "trace", skip(self, callback))]
-    pub fn clone(self, callback: impl Fn(&CloneProgress) -> ()) -> Result<IdleWithoutCommits> {
+    pub fn clone(self, callback: impl Fn(&CloneProgress)) -> Result<IdleWithoutCommits> {
         let repo = clone_repository(
             &self.shared.reference.url,
             &self.shared.repository_path,
@@ -208,7 +210,7 @@ impl IdleWithoutCommits {
             None => self.repo.find_main_branch()?,
         };
 
-        self.repo.reset_hard(&format!("origin/{}", branch))?;
+        self.repo.reset_hard(&format!("origin/{branch}"))?;
 
         let commits = self.repo.get_all_commits()?;
         self.shared.output.set_commits(&commits)?;
@@ -230,7 +232,7 @@ impl IdleWithCommits {
             None => self.repo.find_main_branch()?,
         };
 
-        self.repo.reset_hard(&format!("origin/{}", branch))?;
+        self.repo.reset_hard(&format!("origin/{branch}"))?;
 
         let tags = self.repo.get_all_commit_tags()?;
         self.shared.output.set_commit_tags(&tags)?;
@@ -246,7 +248,7 @@ impl IdleWithCommits {
             // Fill storage from previous output
             for commit in &self.commits {
                 for (metric_name, metric_config) in &self.shared.metrics {
-                    if let Some(value) = self.shared.output.get_metric(&metric_name, &commit.id)? {
+                    if let Some(value) = self.shared.output.get_metric(metric_name, &commit.id)? {
                         self.storage
                             .insert((metric_config.collector.clone(), commit.id.clone()), value);
                     }
@@ -315,7 +317,7 @@ impl ReadyForCollection {
             .iter(&self.collection_execution_graph.graph)
             .fold(indexmap::IndexMap::new(), |mut acc, current| {
                 let task = &self.collection_execution_graph.graph[current];
-                let entry = acc.entry(task.commit_hash.clone()).or_insert(vec![]);
+                let entry: &mut Vec<NodeIndex> = acc.entry(task.commit_hash.clone()).or_default();
                 entry.push(current);
                 acc
             })
@@ -333,18 +335,15 @@ impl ReadyForCollection {
         if let Some(channel) = &channel {
             channel.send(ExecutionProgressCallbackState::Initial {
                 metric_count: self.shared.metrics.len(),
-                task_count: self
-                    .collection_execution_graph
-                    .graph
-                    .node_count()
-                    .try_into()?,
+                task_count: self.collection_execution_graph.graph.node_count(),
             })?;
         }
 
         let _: Vec<Result<()>> = iter
+            .cloned()
             .map(|task_indices| -> Result<()> {
                 for task_idx in task_indices {
-                    let task = &self.collection_execution_graph.graph[*task_idx];
+                    let task = &self.collection_execution_graph.graph[task_idx];
 
                     let _enter =
                         span!(Level::TRACE, "processing task", idx = ?task_idx, commit = ?task.commit_hash).entered();
@@ -353,7 +352,7 @@ impl ReadyForCollection {
                         .storage
                         .contains_key(&(task.collector_config.clone(), task.commit_hash.clone()));
 
-                    if is_in_storage && disable_cache == false {
+                    if is_in_storage && !disable_cache {
                         debug!("reusing value from storage");
                         if let Some(channel) = &channel {
                             channel.send(ExecutionProgressCallbackState::Reused {
@@ -371,12 +370,12 @@ impl ReadyForCollection {
                                     temp_worktree = worktree_pool.try_pull();
                                 }
                                 let mut temp_worktree = temp_worktree.unwrap();
-                                let mut worktree = temp_worktree.as_mut();
+                                let worktree = temp_worktree.as_mut();
 
                                 worktree.reset_hard(&task.commit_hash.0)?;
                                 collector.collect(
                                     &self.storage,
-                                    &mut worktree,
+                                    worktree,
                                     &self.collection_execution_graph,
                                     task_idx,
                                 )?
@@ -455,9 +454,7 @@ impl PostCollection {
                 .collect::<Vec<&String>>();
 
             for metric_name in metric_names {
-                self.shared
-                    .output
-                    .set_metric(&metric_name, &commit, &value)?;
+                self.shared.output.set_metric(metric_name, commit, value)?;
             }
         }
 
@@ -469,9 +466,7 @@ impl PostCollection {
 
 impl CollectionProcess {
     pub fn run_to_completion(self) -> Result<()> {
-        let process = if let CollectionProcess::Initial(process) = self {
-            process
-        } else {
+        let CollectionProcess::Initial(process) = self else {
             return Err(anyhow::anyhow!("Invalid state"));
         };
 

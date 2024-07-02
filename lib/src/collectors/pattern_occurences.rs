@@ -84,7 +84,7 @@ impl BaseCollector for PatternOccurences {
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
-        current_node_idx: &NodeIndex,
+        current_node_idx: NodeIndex,
     ) -> Result<CollectorValue> {
         let changed_files_in_current_commit_value: ChangedFilesValue =
             get_value_of_preceeding_node(
@@ -111,7 +111,7 @@ impl BaseCollector for PatternOccurences {
             debug!("found value from previous commit, only searching changed files");
 
             for changed_file_relative_path in &changed_files_in_current_commit {
-                let changed_file_absolute_path = repo.path.join(&changed_file_relative_path);
+                let changed_file_absolute_path = repo.path.join(changed_file_relative_path);
 
                 if !changed_file_absolute_path.exists() {
                     // File was removed in the current commit
@@ -150,13 +150,12 @@ impl BaseCollector for PatternOccurences {
 
             let root_path = &repo.path.canonicalize()?;
 
-            for entry in WalkDir::new(&root_path).into_iter().filter_entry(|e| {
+            for entry in WalkDir::new(root_path).into_iter().filter_entry(|e| {
                 // Skip .git directory
                 let is_dot_git_dir = e
                     .file_name()
                     .to_str()
-                    .map(|s| s.starts_with(".git"))
-                    .unwrap_or(false);
+                    .is_some_and(|s| s.starts_with(".git"));
 
                 !is_dot_git_dir
             }) {
