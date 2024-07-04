@@ -23,6 +23,11 @@ pub enum CollectorConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum Frequency {
     PerCommit,
+    Yearly,
+    Monthly,
+    Weekly,
+    Daily,
+    Hourly,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]

@@ -7,13 +7,14 @@ use std::{
 };
 
 use anyhow::Result;
+use chrono::{DateTime, TimeZone, Utc};
 use execute::Execute;
 use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use tracing::debug;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Author {
     pub name: Option<String>,
     pub email: Option<String>,
@@ -40,13 +41,32 @@ impl std::fmt::Display for CommitHash {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+fn serialize_time<S>(x: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_i64(x.timestamp())
+}
+
+fn deserialize_time<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let timestamp = i64::deserialize(deserializer)?;
+    Ok(Utc.timestamp_opt(timestamp, 0).unwrap())
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CommitInfo {
     pub id: CommitHash,
     pub author: Author,
     pub committer: Author,
     pub message: Option<String>,
-    pub time: i64,
+    #[serde(
+        serialize_with = "serialize_time",
+        deserialize_with = "deserialize_time"
+    )]
+    pub time: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -179,12 +199,18 @@ impl RepositoryHandle {
         for id in revwalk {
             let oid = id?;
             let commit = git2_repo.find_commit(oid)?;
+
+            let time = chrono::FixedOffset::east_opt(commit.time().offset_minutes() * 60)
+                .unwrap()
+                .timestamp_opt(commit.time().seconds(), 0)
+                .unwrap();
+
             commits.push(CommitInfo {
                 id: commit.id().to_string().into(),
                 author: commit.author().into(),
                 committer: commit.committer().into(),
                 message: commit.message().map(|v| v.to_string()),
-                time: commit.time().seconds(),
+                time: time.to_utc(),
             });
         }
 
