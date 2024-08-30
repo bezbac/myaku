@@ -63,12 +63,16 @@ pub struct ReadyForCollection {
     repo: RepositoryHandle,
     collection_execution_graph: CollectionExecutionGraph,
     storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+
+    latest_commit: CommitHash,
 }
 
 pub struct PostCollection {
     shared: SharedCollectionProcessState,
     collection_execution_graph: CollectionExecutionGraph,
     storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+
+    pub latest_commit: CommitHash,
 }
 
 pub enum CollectionProcess {
@@ -213,6 +217,11 @@ impl IdleWithoutCommits {
         self.repo.reset_hard(&format!("origin/{branch}"))?;
 
         let commits = self.repo.get_all_commits()?;
+
+        if commits.is_empty() {
+            return Err(anyhow::anyhow!("No commits found"));
+        }
+
         self.shared.output.set_commits(&commits)?;
 
         Ok(IdleWithCommits {
@@ -277,11 +286,19 @@ impl IdleWithCommits {
             }
         }
 
+        let latest_commit = self
+            .commits
+            .iter()
+            .max_by(|a, b| a.time.cmp(&b.time))
+            .map(|c| c.id.clone())
+            .ok_or(anyhow::anyhow!("No commits found"))?;
+
         Ok(ReadyForCollection {
             shared: self.shared,
             repo: self.repo,
             storage: self.storage,
             collection_execution_graph,
+            latest_commit,
         })
     }
 }
@@ -415,6 +432,7 @@ impl ReadyForCollection {
             shared: self.shared,
             collection_execution_graph: self.collection_execution_graph,
             storage: self.storage,
+            latest_commit: self.latest_commit,
         })
     }
 }
@@ -465,7 +483,7 @@ impl PostCollection {
 }
 
 impl CollectionProcess {
-    pub fn run_to_completion(self) -> Result<()> {
+    pub fn run_to_completion(self) -> Result<PostCollection> {
         let CollectionProcess::Initial(process) = self else {
             return Err(anyhow::anyhow!("Invalid state"));
         };
@@ -478,7 +496,7 @@ impl CollectionProcess {
             _ => return Err(anyhow::anyhow!("Invalid state")),
         };
 
-        process
+        let process = process
             .collect_commits()?
             .collect_tags()?
             .prepare_for_collection()?
@@ -486,6 +504,6 @@ impl CollectionProcess {
             .write_to_cache()?
             .write_to_output()?;
 
-        Ok(())
+        Ok(process)
     }
 }
