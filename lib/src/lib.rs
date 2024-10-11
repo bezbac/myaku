@@ -14,6 +14,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use ssh_key::PrivateKey;
 use tracing::{debug, span, Level};
 
 use crate::git::clone_repository;
@@ -101,6 +102,8 @@ pub enum CollectionProcess {
 pub struct SharedCollectionProcessState {
     pub reference: GitRepository,
     pub repository_path: PathBuf,
+
+    pub ssh_key: Option<PrivateKey>,
 
     pub metrics: HashMap<String, MetricConfig>,
 
@@ -198,6 +201,7 @@ impl ReadyForClone {
             &self.shared.reference.url,
             &self.shared.repository_path,
             callback,
+            &self.shared.ssh_key,
         )?;
         Ok(IdleWithoutCommits {
             shared: self.shared,

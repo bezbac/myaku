@@ -218,6 +218,8 @@ fn main() -> Result<ExitCode> {
                 output,
                 cache,
 
+                ssh_key: None,
+
                 disable_cache: *disable_cache,
             })
             .initialize()?;

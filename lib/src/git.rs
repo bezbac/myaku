@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    env::temp_dir,
     fmt::Formatter,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -10,8 +11,10 @@ use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use execute::Execute;
 use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
+use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
+use ssh_key::{LineEnding, PrivateKey};
 use tracing::debug;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -556,16 +559,44 @@ impl<R> From<BufReader<R>> for BufReaderWithDelimitedBy<R> {
     }
 }
 
+pub fn create_temp_ssh_key_file(ssh_key: &PrivateKey) -> Result<PathBuf> {
+    let filename = format!(
+        "{}.key",
+        &rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect::<String>()
+    );
+
+    let path = temp_dir().join(filename);
+
+    ssh_key.write_openssh_file(&path, LineEnding::default())?;
+    Ok(path)
+}
+
 pub fn clone_repository(
     url: &str,
     directory: &PathBuf,
     progress_callback: impl Fn(&CloneProgress),
+    ssh_key: &Option<PrivateKey>,
 ) -> Result<RepositoryHandle> {
     let mut command = Command::new(GIT_BINARY_PATH);
     command.arg("clone");
     command.arg(url);
     command.arg(directory);
     command.arg("--progress");
+
+    if let Some(private_key) = ssh_key {
+        let private_key_file = create_temp_ssh_key_file(private_key)?;
+        command.env(
+            "GIT_SSH_COMMAND",
+            &format!(
+                "ssh -i {} -o IdentitiesOnly=yes",
+                private_key_file.display()
+            ),
+        );
+    }
 
     let mut child = command
         .stdout(Stdio::piped())
