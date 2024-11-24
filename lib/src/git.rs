@@ -606,7 +606,7 @@ pub fn clone_repository(
         let private_key_file = create_temp_ssh_key_file(private_key)?;
         command.env(
             "GIT_SSH_COMMAND",
-            &format!(
+            format!(
                 "ssh -i {} -o IdentitiesOnly=yes",
                 private_key_file.display()
             ),
