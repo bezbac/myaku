@@ -379,6 +379,21 @@ impl<'r> WorktreeHandle<'r> {
     pub fn remove(self) -> Result<()> {
         self.repo.remove_worktree(&self.name, Some(false))
     }
+
+    pub fn list_files(&self) -> Result<Vec<String>> {
+        let git2_repo: Repository = self.into();
+        let mut files = Vec::new();
+
+        let tree = git2_repo.find_tree(git2_repo.head()?.peel_to_tree()?.id())?;
+        tree.walk(git2::TreeWalkMode::PreOrder, |_, entry| {
+            files.push(entry.name().map(|e| e.to_string()));
+            git2::TreeWalkResult::Ok
+        })?;
+
+        let files = files.into_iter().flatten().collect();
+
+        Ok(files)
+    }
 }
 
 fn get_current_diff_to_parent(repo: &Repository) -> Result<Diff<'_>> {

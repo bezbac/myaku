@@ -19,3 +19,7 @@ frequency = "per-commit"
 collector = "total-pattern-occurences"
 frequency = "per-commit"
 pattern = "\\/\\/ TODO"
+
+[metrics.file-list]
+collector = "file-list"
+frequency = "per-commit"

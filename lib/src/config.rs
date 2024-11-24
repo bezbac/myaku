@@ -17,6 +17,8 @@ pub enum CollectorConfig {
     PatternOccurences { pattern: String },
     #[serde(rename = "changed-files")]
     ChangedFiles,
+    #[serde(rename = "file-list")]
+    FileList,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]

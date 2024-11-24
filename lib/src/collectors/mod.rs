@@ -11,6 +11,7 @@ use crate::{
 };
 
 mod changed_files;
+mod file_list;
 mod loc;
 mod pattern_occurences;
 mod total_cargo_dependencies;
@@ -20,6 +21,7 @@ mod total_pattern_occurences;
 mod utils;
 
 pub use changed_files::ChangedFilesValue;
+pub use file_list::FileListValue;
 pub use loc::LocValue;
 pub use pattern_occurences::PatternOccurencesValue;
 pub use total_cargo_dependencies::TotalCargoDependenciesValue;
@@ -37,6 +39,7 @@ pub enum CollectorValue {
     TotalDiffStat(total_diff_stat::TotalDiffStatValue),
     TotalLoc(total_loc::TotalLocValue),
     TotalPatternOccurences(total_pattern_occurences::TotalPatternOccurencesValue),
+    FileList(file_list::FileListValue),
 }
 
 macro_rules! impl_from {
@@ -65,6 +68,7 @@ impl_from!(
     total_pattern_occurences::TotalPatternOccurencesValue,
     TotalPatternOccurences
 );
+impl_from!(file_list::FileListValue, FileList);
 
 macro_rules! impl_try_into {
     ($value_type:ty, $variant:ident) => {
@@ -101,6 +105,7 @@ impl_try_into!(
     total_pattern_occurences::TotalPatternOccurencesValue,
     TotalPatternOccurences
 );
+impl_try_into!(file_list::FileListValue, FileList);
 
 pub enum Collector {
     Base(Box<dyn BaseCollector>),
@@ -150,6 +155,7 @@ impl From<&CollectorConfig> for Collector {
                     pattern: pattern.clone(),
                 }))
             }
+            CollectorConfig::FileList => Collector::Base(Box::new(file_list::FileList {})),
         }
     }
 }
