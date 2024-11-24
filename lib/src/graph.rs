@@ -103,6 +103,22 @@ pub fn add_task(
                 CollectionGraphEdge { distance: 0 },
             );
         }
+        CollectorConfig::TotalFileCount => {
+            let dependency_node_idx = add_task(
+                graph,
+                created_tasks,
+                &CollectorConfig::FileList,
+                current_commit_hash,
+                previous_commit_hash,
+                previous_commit_distance,
+            )?;
+
+            graph.add_edge(
+                dependency_node_idx,
+                node_idx,
+                CollectionGraphEdge { distance: 0 },
+            );
+        }
         _ => {}
     }
 
