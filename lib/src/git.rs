@@ -620,15 +620,30 @@ pub fn clone_repository(
 
     let stdout = child.stderr.take().unwrap();
 
+    let mut lines = vec![];
     let reader: BufReaderWithDelimitedBy<_> = BufReader::new(stdout).into();
 
     reader.delimited_by(&['\n', '\r']).for_each(|line| {
         let line = line.unwrap();
+
+        if line.trim().is_empty() {
+            return;
+        }
+
         let progress = CloneProgress::try_from(&line);
         if let Ok(progress) = progress {
             progress_callback(&progress);
         }
+
+        lines.push(line);
     });
+
+    let exit = child.wait()?;
+
+    if !exit.success() {
+        debug!("{}", lines.join("\n"));
+        return Err(anyhow::anyhow!("Git clone was unsuccessful"));
+    }
 
     Ok(RepositoryHandle {
         path: directory.clone(),
