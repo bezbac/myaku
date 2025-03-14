@@ -11,6 +11,7 @@ use crate::{
 };
 
 mod changed_files;
+mod changed_files_loc;
 mod file_list;
 mod loc;
 mod pattern_occurences;
@@ -22,6 +23,7 @@ mod total_pattern_occurences;
 mod utils;
 
 pub use changed_files::ChangedFilesValue;
+pub use changed_files_loc::ChangedFilesLocValue;
 pub use file_list::FileListValue;
 pub use loc::LocValue;
 pub use pattern_occurences::PatternOccurencesValue;
@@ -43,6 +45,7 @@ pub enum CollectorValue {
     TotalPatternOccurences(total_pattern_occurences::TotalPatternOccurencesValue),
     FileList(file_list::FileListValue),
     TotalFileCount(total_file_count::TotalFileCountValue),
+    ChangedFilesLoc(changed_files_loc::ChangedFilesLocValue),
 }
 
 macro_rules! impl_from {
@@ -73,6 +76,7 @@ impl_from!(
 );
 impl_from!(file_list::FileListValue, FileList);
 impl_from!(total_file_count::TotalFileCountValue, TotalFileCount);
+impl_from!(changed_files_loc::ChangedFilesLocValue, ChangedFilesLoc);
 
 macro_rules! impl_try_into {
     ($value_type:ty, $variant:ident) => {
@@ -111,6 +115,7 @@ impl_try_into!(
 );
 impl_try_into!(file_list::FileListValue, FileList);
 impl_try_into!(total_file_count::TotalFileCountValue, TotalFileCount);
+impl_try_into!(changed_files_loc::ChangedFilesLocValue, ChangedFilesLoc);
 
 pub enum Collector {
     Base(Box<dyn BaseCollector>),
@@ -163,6 +168,9 @@ impl From<&CollectorConfig> for Collector {
             CollectorConfig::FileList => Collector::Base(Box::new(file_list::FileList {})),
             CollectorConfig::TotalFileCount => {
                 Collector::Derived(Box::new(total_file_count::TotalFileCount {}))
+            }
+            CollectorConfig::ChangedFilesLoc => {
+                Collector::Base(Box::new(changed_files_loc::ChangedFilesLoc {}))
             }
         }
     }

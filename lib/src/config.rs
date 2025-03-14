@@ -21,6 +21,8 @@ pub enum CollectorConfig {
     FileList,
     #[serde(rename = "total-file-count")]
     TotalFileCount,
+    #[serde(rename = "changed-files-loc")]
+    ChangedFilesLoc,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]

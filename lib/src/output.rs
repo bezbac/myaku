@@ -16,9 +16,9 @@ use serde_arrow::schema::{SchemaLike, TracingOptions};
 
 use crate::{
     collectors::{
-        ChangedFilesValue, CollectorValue, FileListValue, LocValue, PatternOccurencesValue,
-        TotalCargoDependenciesValue, TotalDiffStatValue, TotalFileCountValue, TotalLocValue,
-        TotalPatternOccurencesValue,
+        ChangedFilesLocValue, ChangedFilesValue, CollectorValue, FileListValue, LocValue,
+        PatternOccurencesValue, TotalCargoDependenciesValue, TotalDiffStatValue,
+        TotalFileCountValue, TotalLocValue, TotalPatternOccurencesValue,
     },
     git::{CommitHash, CommitInfo, CommitTagInfo},
 };
@@ -351,6 +351,9 @@ fn values_to_record_batch(values: &HashMap<CommitHash, CollectorValue>) -> Resul
         }
         CollectorValue::TotalFileCount(_) => {
             to_batch!(values, commits, TotalFileCountValue)
+        }
+        CollectorValue::ChangedFilesLoc(_) => {
+            to_batch!(values, commits, ChangedFilesLocValue)
         }
     };
 

@@ -23,3 +23,7 @@ pattern = "\\/\\/ TODO"
 [metrics.total-file-count]
 collector = "total-file-count"
 frequency = "per-commit"
+
+[metrics.changed-files-loc]
+collector = "changed-files-loc"
+frequency = "per-commit"
