@@ -113,6 +113,9 @@ pub struct SharedCollectionProcessState {
     pub cache: Box<dyn Cache>,
 
     pub disable_cache: bool,
+
+    /// The `force_latest_commit` flag will be passed to the `build_collection_execution_graph` function
+    pub force_latest_commit: bool,
 }
 
 #[derive(Debug)]
@@ -269,8 +272,11 @@ impl IdleWithCommits {
             }
         }
 
-        let collection_execution_graph =
-            build_collection_execution_graph(&self.shared.metrics, &self.commits)?;
+        let collection_execution_graph = build_collection_execution_graph(
+            &self.shared.metrics,
+            &self.commits,
+            self.shared.force_latest_commit,
+        )?;
 
         if !self.shared.disable_cache {
             // Fill storage from cache

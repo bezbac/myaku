@@ -158,6 +158,9 @@ pub fn add_task(
 pub fn build_collection_execution_graph(
     metrics: &HashMap<String, MetricConfig>,
     commits: &[CommitInfo],
+    // Create a task for every metric for the latest commit,
+    // regardless of the frequency specified in the metric config
+    force_latest_commit: bool,
 ) -> Result<CollectionExecutionGraph> {
     let mut graph: Graph<CollectionTask, CollectionGraphEdge> = Graph::new();
 
@@ -173,10 +176,13 @@ pub fn build_collection_execution_graph(
         let mut distance = 0_usize;
         let mut previous_commit: Option<&CommitInfo> = None;
 
-        for current_commit in &sorted_commits {
+        for (index, current_commit) in sorted_commits.iter().enumerate() {
             let current_commit_hash = &current_commit.id;
+            let is_latest_commit = index == sorted_commits.len() - 1;
 
-            let skipped = if let Some(previous_commit) = previous_commit {
+            let skipped = if force_latest_commit && is_latest_commit {
+                false
+            } else if let Some(previous_commit) = previous_commit {
                 let is_same_year = previous_commit.time.date_naive().year_ce()
                     == current_commit.time.date_naive().year_ce();
 
@@ -252,7 +258,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_collection_execution_graph_per_commit() {
+    fn test_build_collection_execution_graph_per_commit_without_force_latest() {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -271,7 +277,7 @@ mod test {
             create_dummy_commit("5", "2012-12-16T00:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
         assert_eq!(result.graph.node_count(), commits.len());
         for c in commits {
@@ -286,7 +292,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_collection_execution_graph_daily() {
+    fn test_build_collection_execution_graph_daily_without_force_latest() {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -307,13 +313,14 @@ mod test {
             create_dummy_commit("3.1", "2012-12-14T01:00:00Z"),
             create_dummy_commit("3.2", "2012-12-14T18:00:00Z"),
             create_dummy_commit("4", "2012-12-15T00:00:00Z"),
-            create_dummy_commit("5", "2012-12-16T00:00:00Z"),
+            create_dummy_commit("5.0", "2012-12-16T00:00:00Z"),
+            create_dummy_commit("5.1", "2012-12-16T01:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
         assert_eq!(result.graph.node_count(), 5);
-        for c in ["1.0", "2", "3.0", "4", "5"] {
+        for c in ["1.0", "2", "3.0", "4", "5.0"] {
             let node = result
                 .graph
                 .raw_nodes()
@@ -325,7 +332,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_collection_execution_graph_weekly() {
+    fn test_build_collection_execution_graph_weekly_without_force_latest() {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -345,7 +352,7 @@ mod test {
             create_dummy_commit("4.0", "2024-07-24T00:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
         assert_eq!(result.graph.node_count(), 4);
         for c in ["1.0", "2.0", "3.0", "4.0"] {
@@ -360,7 +367,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_collection_execution_graph_monthly() {
+    fn test_build_collection_execution_graph_monthly_without_force_latest() {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -381,7 +388,7 @@ mod test {
             create_dummy_commit("4.1", "2013-05-19T10:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
         assert_eq!(result.graph.node_count(), 4);
         for c in ["1.0", "2.0", "3.0", "4.0"] {
@@ -396,7 +403,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_collection_execution_graph_yearly() {
+    fn test_build_collection_execution_graph_yearly_without_force_latest() {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -417,10 +424,192 @@ mod test {
             create_dummy_commit("2014#3", "2014-03-01T14:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
         assert_eq!(result.graph.node_count(), 3);
         for c in ["2012#1", "2013#1", "2014#1"] {
+            let node = result
+                .graph
+                .raw_nodes()
+                .iter()
+                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
+
+            assert!(node.is_some())
+        }
+    }
+
+    #[test]
+    fn test_build_collection_execution_graph_per_commit_with_force_latest() {
+        let mut metrics = HashMap::new();
+
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricConfig {
+                frequency: crate::Frequency::PerCommit,
+                collector: CollectorConfig::Loc,
+            },
+        );
+
+        let commits = vec![
+            create_dummy_commit("1", "2012-12-12T00:00:00Z"),
+            create_dummy_commit("2", "2012-12-13T00:00:00Z"),
+            create_dummy_commit("3", "2012-12-14T00:00:00Z"),
+            create_dummy_commit("4", "2012-12-15T00:00:00Z"),
+            create_dummy_commit("5", "2012-12-16T00:00:00Z"),
+        ];
+
+        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+
+        assert_eq!(result.graph.node_count(), commits.len());
+        for c in commits {
+            let node = result
+                .graph
+                .raw_nodes()
+                .iter()
+                .find(|n| n.weight.commit_hash == c.id);
+
+            assert!(node.is_some())
+        }
+    }
+
+    #[test]
+    fn test_build_collection_execution_graph_daily_with_force_latest() {
+        let mut metrics = HashMap::new();
+
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricConfig {
+                frequency: crate::Frequency::Daily,
+                collector: CollectorConfig::Loc,
+            },
+        );
+
+        let commits = vec![
+            create_dummy_commit("1.0", "2012-12-12T00:00:00Z"),
+            create_dummy_commit("1.1", "2012-12-12T01:00:00Z"),
+            create_dummy_commit("1.2", "2012-12-12T02:00:00Z"),
+            create_dummy_commit("1.3", "2012-12-12T03:00:00Z"),
+            create_dummy_commit("2", "2012-12-13T00:00:00Z"),
+            create_dummy_commit("3.0", "2012-12-14T00:00:00Z"),
+            create_dummy_commit("3.1", "2012-12-14T01:00:00Z"),
+            create_dummy_commit("3.2", "2012-12-14T18:00:00Z"),
+            create_dummy_commit("4", "2012-12-15T00:00:00Z"),
+            create_dummy_commit("5.0", "2012-12-16T00:00:00Z"),
+            create_dummy_commit("5.1", "2012-12-16T01:00:00Z"),
+        ];
+
+        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+
+        assert_eq!(result.graph.node_count(), 6);
+        for c in ["1.0", "2", "3.0", "4", "5.0", "5.1"] {
+            let node = result
+                .graph
+                .raw_nodes()
+                .iter()
+                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
+
+            assert!(node.is_some())
+        }
+    }
+
+    #[test]
+    fn test_build_collection_execution_graph_weekly_with_force_latest() {
+        let mut metrics = HashMap::new();
+
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricConfig {
+                frequency: crate::Frequency::Weekly,
+                collector: CollectorConfig::Loc,
+            },
+        );
+
+        let commits = vec![
+            create_dummy_commit("1.0", "2024-07-02T00:00:00Z"),
+            create_dummy_commit("1.1", "2024-07-02T12:00:00Z"),
+            create_dummy_commit("1.2", "2024-07-05T00:00:00Z"),
+            create_dummy_commit("2.0", "2024-07-08T00:00:00Z"),
+            create_dummy_commit("3.0", "2024-07-15T00:00:00Z"),
+            create_dummy_commit("4.0", "2024-07-24T00:00:00Z"),
+            create_dummy_commit("4.1", "2024-07-24T01:00:00Z"),
+        ];
+
+        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+
+        assert_eq!(result.graph.node_count(), 5);
+        for c in ["1.0", "2.0", "3.0", "4.0", "4.1"] {
+            let node = result
+                .graph
+                .raw_nodes()
+                .iter()
+                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
+
+            assert!(node.is_some())
+        }
+    }
+
+    #[test]
+    fn test_build_collection_execution_graph_monthly_with_force_latest() {
+        let mut metrics = HashMap::new();
+
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricConfig {
+                frequency: crate::Frequency::Monthly,
+                collector: CollectorConfig::Loc,
+            },
+        );
+
+        let commits = vec![
+            create_dummy_commit("1.0", "2012-12-12T00:00:00Z"),
+            create_dummy_commit("1.1", "2012-12-13T01:00:00Z"),
+            create_dummy_commit("1.2", "2012-12-13T12:10:00Z"),
+            create_dummy_commit("2.0", "2013-01-18T12:10:00Z"),
+            create_dummy_commit("3.0", "2013-02-18T12:10:00Z"),
+            create_dummy_commit("4.0", "2013-05-18T12:10:00Z"),
+            create_dummy_commit("4.1", "2013-05-19T10:00:00Z"),
+        ];
+
+        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+
+        assert_eq!(result.graph.node_count(), 5);
+        for c in ["1.0", "2.0", "3.0", "4.0", "4.1"] {
+            let node = result
+                .graph
+                .raw_nodes()
+                .iter()
+                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
+
+            assert!(node.is_some())
+        }
+    }
+
+    #[test]
+    fn test_build_collection_execution_graph_yearly_with_force_latest() {
+        let mut metrics = HashMap::new();
+
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricConfig {
+                frequency: crate::Frequency::Yearly,
+                collector: CollectorConfig::Loc,
+            },
+        );
+
+        let commits = vec![
+            create_dummy_commit("2012#1", "2012-12-12T00:00:00Z"),
+            create_dummy_commit("2012#2", "2012-12-12T01:00:00Z"),
+            create_dummy_commit("2012#3", "2012-12-13T00:00:00Z"),
+            create_dummy_commit("2013#1", "2013-02-06T00:00:00Z"),
+            create_dummy_commit("2014#1", "2014-02-07T00:00:00Z"),
+            create_dummy_commit("2014#2", "2014-03-01T14:00:00Z"),
+            create_dummy_commit("2014#3", "2014-03-01T14:00:00Z"),
+        ];
+
+        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+
+        assert_eq!(result.graph.node_count(), 4);
+        for c in ["2012#1", "2013#1", "2014#1", "2014#3"] {
             let node = result
                 .graph
                 .raw_nodes()

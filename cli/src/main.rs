@@ -221,6 +221,8 @@ fn main() -> Result<ExitCode> {
                 ssh_key: None,
 
                 disable_cache: *disable_cache,
+
+                force_latest_commit: true,
             })
             .initialize()?;
 
