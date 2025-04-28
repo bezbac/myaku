@@ -11,6 +11,7 @@ chrono = { version = "0.4.38", features = ["serde"] }
 dashmap = "5.5.3"
 execute = "0.2.13"
 git2 = "0.18.1"
+globset = { version = "0.4", features = ["serde1"] }
 grep = "0.3.1"
 indexmap = "2.2.6"
 nanoid = "0.4.0"

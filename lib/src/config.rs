@@ -1,3 +1,4 @@
+use globset::Glob;
 use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
@@ -12,9 +13,15 @@ pub enum CollectorConfig {
     #[serde(rename = "total-cargo-deps")]
     TotalCargoDeps,
     #[serde(rename = "total-pattern-occurences")]
-    TotalPatternOccurences { pattern: String },
+    TotalPatternOccurences {
+        pattern: String,
+        files: Option<Vec<Glob>>,
+    },
     #[serde(rename = "pattern-occurences")]
-    PatternOccurences { pattern: String },
+    PatternOccurences {
+        pattern: String,
+        files: Option<Vec<Glob>>,
+    },
     #[serde(rename = "changed-files")]
     ChangedFiles,
     #[serde(rename = "file-list")]

@@ -27,6 +27,7 @@ pub struct CollectionExecutionGraph {
     pub graph: Graph<CollectionTask, CollectionGraphEdge>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn add_task(
     graph: &mut Graph<CollectionTask, CollectionGraphEdge>,
     created_tasks: &mut HashMap<(CollectorConfig, CommitHash), NodeIndex>,
@@ -53,12 +54,17 @@ pub fn add_task(
 
     // Create dependency tasks
     match &collector_config {
-        CollectorConfig::TotalPatternOccurences { pattern } => {
+        CollectorConfig::TotalPatternOccurences { pattern, files } => {
+            // TODO: Optimize the dependency creation of the pattern occurences task
+            // This might be inefficient when there are multiple `TotalPatternOccurences` tasks
+            // We would create a new pattern occurences task for each one of them
+            // Maybe we should combine the files and patterns of all tasks and create a single one
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,
                 &CollectorConfig::PatternOccurences {
                     pattern: pattern.clone(),
+                    files: files.clone(),
                 },
                 current_commit_hash,
                 previous_commit_hash,
@@ -71,7 +77,11 @@ pub fn add_task(
                 CollectionGraphEdge { distance: 0 },
             );
         }
-        CollectorConfig::PatternOccurences { pattern: _ } | CollectorConfig::TotalCargoDeps => {
+        CollectorConfig::PatternOccurences {
+            pattern: _,
+            files: _,
+        }
+        | CollectorConfig::TotalCargoDeps => {
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,

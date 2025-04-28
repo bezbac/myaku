@@ -155,14 +155,16 @@ impl From<&CollectorConfig> for Collector {
             CollectorConfig::TotalCargoDeps => Collector::Base(Box::new(
                 total_cargo_dependencies::TotalCargoDependencies {},
             )),
-            CollectorConfig::PatternOccurences { pattern } => {
+            CollectorConfig::PatternOccurences { pattern, files } => {
                 Collector::Base(Box::new(pattern_occurences::PatternOccurences {
                     pattern: pattern.clone(),
+                    files: files.clone(),
                 }))
             }
-            CollectorConfig::TotalPatternOccurences { pattern } => {
+            CollectorConfig::TotalPatternOccurences { pattern, files } => {
                 Collector::Derived(Box::new(total_pattern_occurences::TotalPatternOccurences {
                     pattern: pattern.clone(),
+                    files: files.clone(),
                 }))
             }
             CollectorConfig::FileList => Collector::Base(Box::new(file_list::FileList {})),

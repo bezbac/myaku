@@ -1158,15 +1158,16 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "globset"
-version = "0.4.14"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57da3b9b5b85bd66f31093f8c408b90a74431672542466497dcbdfdc02034be1"
+checksum = "54a1028dfc5f5df5da8a56a73e6c153c9a9708ec57232470703592a3f18e49f5"
 dependencies = [
  "aho-corasick 1.1.3",
  "bstr",
  "log",
  "regex-automata 0.4.7",
  "regex-syntax 0.8.4",
+ "serde",
 ]
 
 [[package]]
@@ -1664,6 +1665,7 @@ dependencies = [
  "dashmap 5.5.3",
  "execute",
  "git2",
+ "globset",
  "grep",
  "indexmap",
  "nanoid",

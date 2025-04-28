@@ -2,10 +2,11 @@ use std::{collections::HashSet, io::BufWriter};
 
 use anyhow::Result;
 use dashmap::DashMap;
+use globset::{Candidate, Glob, GlobSetBuilder};
 use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 use walkdir::WalkDir;
 
 use crate::{
@@ -51,6 +52,7 @@ enum PartialGrepJSONLine {
 #[derive(Debug)]
 pub struct PatternOccurences {
     pub pattern: String,
+    pub files: Option<Vec<Glob>>,
 }
 
 fn get_matches_from_grep_output(output: &str) -> HashSet<PartialMatchData> {
@@ -98,6 +100,33 @@ impl BaseCollector for PatternOccurences {
 
         let changed_files_in_current_commit = changed_files_in_current_commit_value.files;
 
+        let globset = if let Some(globs) = &self.files {
+            let mut files = GlobSetBuilder::new();
+            for glob in globs.iter().cloned() {
+                files.add(glob);
+            }
+            match files.build() {
+                Ok(files) => Some(files),
+                Err(e) => {
+                    // TODO: Handle this error BEFORE the collector is run
+                    warn!("Error creating glob set: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let matching_files_in_current_commit = if let Some(globs) = &globset {
+            changed_files_in_current_commit
+                .clone()
+                .into_iter()
+                .filter(|f| globs.is_match_candidate(&Candidate::new(f)))
+                .collect::<HashSet<_>>()
+        } else {
+            changed_files_in_current_commit.clone()
+        };
+
         let mut searcher = SearcherBuilder::new().line_number(true).build();
         let matcher = RegexMatcher::new(&self.pattern)?;
 
@@ -110,7 +139,7 @@ impl BaseCollector for PatternOccurences {
         if let Some(previous_commit_value) = previous_commit_value {
             debug!("found value from previous commit, only searching changed files");
 
-            for changed_file_relative_path in &changed_files_in_current_commit {
+            for changed_file_relative_path in &matching_files_in_current_commit {
                 let changed_file_absolute_path = repo.path.join(changed_file_relative_path);
 
                 if !changed_file_absolute_path.exists() {
@@ -168,6 +197,12 @@ impl BaseCollector for PatternOccurences {
                 let path = entry.path();
                 let path_relative_to_root = path.canonicalize()?;
                 let path_relative_to_root = path_relative_to_root.strip_prefix(root_path)?;
+
+                if let Some(globs) = &globset {
+                    if !globs.is_match_candidate(&Candidate::new(path_relative_to_root)) {
+                        continue;
+                    }
+                };
 
                 debug!("searching file: {:?}", path_relative_to_root);
 

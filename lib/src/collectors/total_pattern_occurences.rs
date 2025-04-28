@@ -1,5 +1,6 @@
 use anyhow::Result;
 use dashmap::DashMap;
+use globset::Glob;
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ use super::{
 #[derive(Debug)]
 pub(super) struct TotalPatternOccurences {
     pub pattern: String,
+    pub files: Option<Vec<Glob>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -37,6 +39,7 @@ impl DerivedCollector for TotalPatternOccurences {
                 n.collector_config
                     == CollectorConfig::PatternOccurences {
                         pattern: self.pattern.clone(),
+                        files: self.files.clone(),
                     }
             },
         )?
