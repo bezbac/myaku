@@ -246,6 +246,8 @@ pub fn build_collection_execution_graph(
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashSet;
+
     use chrono::{DateTime, Utc};
 
     use crate::git::Author;
@@ -265,6 +267,25 @@ mod test {
             message: None,
             time: time.parse::<DateTime<Utc>>().unwrap(),
         }
+    }
+
+    fn assert_node_commit_hashes(
+        graph: &Graph<CollectionTask, CollectionGraphEdge>,
+        expected_commit_hashes: &[&str],
+    ) {
+        let node_commit_hashes: HashSet<_> = graph
+            .raw_nodes()
+            .iter()
+            .map(|n| n.weight.commit_hash.to_string())
+            .collect();
+
+        let expected_node_commit_hashes: HashSet<_> = expected_commit_hashes
+            .iter()
+            .cloned()
+            .map(|s| s.to_string())
+            .collect();
+
+        assert_eq!(node_commit_hashes, expected_node_commit_hashes);
     }
 
     #[test]
@@ -289,16 +310,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
-        assert_eq!(result.graph.node_count(), commits.len());
-        for c in commits {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == c.id);
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1", "2", "3", "4", "5"]);
     }
 
     #[test]
@@ -329,16 +341,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
-        assert_eq!(result.graph.node_count(), 5);
-        for c in ["1.0", "2", "3.0", "4", "5.0"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2", "3.0", "4", "5.0"]);
     }
 
     #[test]
@@ -364,16 +367,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
-        assert_eq!(result.graph.node_count(), 4);
-        for c in ["1.0", "2.0", "3.0", "4.0"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0"]);
     }
 
     #[test]
@@ -400,16 +394,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
-        assert_eq!(result.graph.node_count(), 4);
-        for c in ["1.0", "2.0", "3.0", "4.0"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0"]);
     }
 
     #[test]
@@ -436,16 +421,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
 
-        assert_eq!(result.graph.node_count(), 3);
-        for c in ["2012#1", "2013#1", "2014#1"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["2012#1", "2013#1", "2014#1"]);
     }
 
     #[test]
@@ -470,16 +446,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
 
-        assert_eq!(result.graph.node_count(), commits.len());
-        for c in commits {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == c.id);
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1", "2", "3", "4", "5"]);
     }
 
     #[test]
@@ -510,16 +477,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
 
-        assert_eq!(result.graph.node_count(), 6);
-        for c in ["1.0", "2", "3.0", "4", "5.0", "5.1"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2", "3.0", "4", "5.0", "5.1"]);
     }
 
     #[test]
@@ -546,16 +504,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
 
-        assert_eq!(result.graph.node_count(), 5);
-        for c in ["1.0", "2.0", "3.0", "4.0", "4.1"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0", "4.1"]);
     }
 
     #[test]
@@ -582,16 +531,7 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
 
-        assert_eq!(result.graph.node_count(), 5);
-        for c in ["1.0", "2.0", "3.0", "4.0", "4.1"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0", "4.1"]);
     }
 
     #[test]
@@ -618,15 +558,6 @@ mod test {
 
         let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
 
-        assert_eq!(result.graph.node_count(), 4);
-        for c in ["2012#1", "2013#1", "2014#1", "2014#3"] {
-            let node = result
-                .graph
-                .raw_nodes()
-                .iter()
-                .find(|n| n.weight.commit_hash == CommitHash(String::from(c)));
-
-            assert!(node.is_some())
-        }
+        assert_node_commit_hashes(&result.graph, &["2012#1", "2013#1", "2014#1", "2014#3"]);
     }
 }
