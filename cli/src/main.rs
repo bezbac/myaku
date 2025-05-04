@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use myaku::{
-    Cache, FileCache, Initial, JsonOutput, Output, ParquetOutput, SharedCollectionProcessState,
+    Cache, FileCache, Initial, JsonOutput, OutputObj, ParquetOutput, SharedCollectionProcessState,
 };
 use serde::Serialize;
 use tracing::debug;
@@ -191,9 +191,9 @@ fn main() -> Result<ExitCode> {
                 .output_path
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
 
-            let output: Box<dyn Output> = match output_type {
-                OutputType::Json => Box::new(JsonOutput::new(&output_dir)),
-                OutputType::Parquet => Box::new(ParquetOutput::new(&output_dir)),
+            let output: OutputObj = match output_type {
+                OutputType::Json => OutputObj::Json(JsonOutput::new(&output_dir)),
+                OutputType::Parquet => OutputObj::Parquet(ParquetOutput::new(&output_dir)),
             };
 
             let cache_directory = config

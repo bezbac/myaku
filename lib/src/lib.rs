@@ -9,6 +9,7 @@ use git::{CommitInfo, GitError};
 use graph::CollectionExecutionGraph;
 use nanoid::nanoid;
 use object_pool::Pool;
+use output::Output;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Walker;
 #[cfg(feature = "rayon")]
@@ -32,7 +33,7 @@ mod output;
 pub use cache::{Cache, FileCache};
 pub use config::{CollectorConfig, Frequency, GitRepository, MetricConfig};
 pub use git::CloneProgress;
-pub use output::{JsonOutput, Output, ParquetOutput};
+pub use output::{JsonOutput, OutputObj, ParquetOutput};
 
 #[derive(Error, Debug)]
 pub enum CollectionProcessError {
@@ -55,7 +56,7 @@ pub enum CollectionProcessError {
     DerivedCollectorError(#[from] collectors::DerivedCollectorError),
 
     #[error("{0}")]
-    Output(#[from] output::OutputError),
+    OutputError(#[from] output::OutputError),
 
     #[error("{0}")]
     Cache(#[from] cache::CacheError),
@@ -145,7 +146,7 @@ pub struct SharedCollectionProcessState {
 
     pub worktree_path: PathBuf,
 
-    pub output: Box<dyn Output>,
+    pub output: OutputObj,
     pub cache: Box<dyn Cache>,
 
     pub disable_cache: bool,
