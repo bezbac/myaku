@@ -1,28 +1,46 @@
-use anyhow::Result;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{config::CollectorConfig, git::CommitHash, graph::CollectionExecutionGraph};
 
-use super::{loc::LocValue, utils::get_value_of_preceeding_node, CollectorValue, DerivedCollector};
+use super::{
+    loc::LocValue,
+    utils::{get_value_of_preceeding_node, LookupError},
+    CollectorValue, CollectorValueCastError, DerivedCollector,
+};
 
 #[derive(Debug)]
-pub(super) struct TotalLoc;
+pub(crate) struct TotalLoc;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TotalLocValue {
     loc: u32,
 }
 
+#[derive(Error, Debug)]
+pub enum TotalLocError {
+    #[error("{0}")]
+    Lookup(#[from] LookupError),
+
+    #[error("{0}")]
+    Cast(#[from] CollectorValueCastError),
+
+    #[error("{0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+}
+
 impl DerivedCollector for TotalLoc {
+    type Error = TotalLocError;
+
     #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
         storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         graph: &CollectionExecutionGraph,
         current_node_idx: NodeIndex,
-    ) -> Result<CollectorValue> {
+    ) -> Result<CollectorValue, TotalLocError> {
         let loc_value: LocValue = get_value_of_preceeding_node(
             storage,
             graph,

@@ -1,5 +1,6 @@
 use dashmap::DashMap;
 use petgraph::graph::{EdgeIndex, NodeIndex};
+use thiserror::Error;
 
 use crate::{
     config::CollectorConfig,
@@ -86,6 +87,12 @@ pub fn get_previous_commit_value_of_collector(
     value.map(|v| v.clone())
 }
 
+#[derive(Error, Debug)]
+#[error("Could not read required value from storage for node {task_idx:?}")]
+pub struct LookupError {
+    task_idx: NodeIndex,
+}
+
 pub fn get_value_of_preceeding_node<
     EP: Fn(&CollectionGraphEdge) -> bool,
     NP: Fn(&CollectionTask) -> bool,
@@ -95,7 +102,7 @@ pub fn get_value_of_preceeding_node<
     current_node_idx: NodeIndex,
     edge_predicate: EP,
     node_predicate: NP,
-) -> anyhow::Result<CollectorValue> {
+) -> Result<CollectorValue, LookupError> {
     let task_idx = find_preceding_node(graph, current_node_idx, edge_predicate, node_predicate)
         .unwrap_or_else(|| {
             panic!("Could not find required dependency task for node {current_node_idx:?}",)
@@ -105,12 +112,7 @@ pub fn get_value_of_preceeding_node<
 
     let task_value = storage
         .get(&(task.collector_config.clone(), task.commit_hash.clone()))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Could not read required value from storage for node {:?}",
-                task_idx
-            )
-        })?;
+        .ok_or(LookupError { task_idx })?;
 
     Ok(task_value.clone())
 }

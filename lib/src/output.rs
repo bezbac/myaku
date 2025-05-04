@@ -6,13 +6,13 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
 use arrow::{
     array::{Array, ArrayRef, RecordBatch, StringArray},
     datatypes::{Field, FieldRef, Schema},
 };
 use parquet::{arrow::ArrowWriter, basic::Compression, file::properties::WriterProperties};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
+use thiserror::Error;
 
 use crate::{
     collectors::{
@@ -23,21 +23,46 @@ use crate::{
     git::{CommitHash, CommitInfo, CommitTagInfo},
 };
 
+#[derive(Error, Debug)]
+pub enum OutputError {
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("Could not parse string: {0}")]
+    StringParsing(#[from] std::string::FromUtf8Error),
+
+    #[error("Serde JSON error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("Serde Arrow error: {0}")]
+    SerdeArrow(#[from] serde_arrow::Error),
+
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
+
+    #[error("Could not serialize as arrow record batch: {0}")]
+    RecordBatchConversion(#[from] RecordBatchConversionError),
+}
+
 pub trait Output: core::fmt::Debug {
-    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()>;
+    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<(), OutputError>;
 
-    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()>;
+    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<(), OutputError>;
 
-    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<CollectorValue>>;
+    fn get_metric(
+        &self,
+        metric_name: &str,
+        commit: &CommitHash,
+    ) -> Result<Option<CollectorValue>, OutputError>;
     fn set_metric(
         &mut self,
         metric_name: &str,
         commit: &CommitHash,
         value: &CollectorValue,
-    ) -> Result<()>;
+    ) -> Result<(), OutputError>;
 
-    fn load(&self) -> Result<()>;
-    fn flush(&self) -> Result<()>;
+    fn load(&self) -> Result<(), OutputError>;
+    fn flush(&self) -> Result<(), OutputError>;
 }
 
 #[derive(Debug)]
@@ -66,7 +91,11 @@ impl JsonOutput {
 }
 
 impl Output for JsonOutput {
-    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<CollectorValue>> {
+    fn get_metric(
+        &self,
+        metric_name: &str,
+        commit: &CommitHash,
+    ) -> Result<Option<CollectorValue>, OutputError> {
         let file_path = self.get_metric_file(metric_name, commit);
 
         if !file_path.exists() {
@@ -86,7 +115,7 @@ impl Output for JsonOutput {
         Ok(Some(value))
     }
 
-    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
+    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<(), OutputError> {
         let file_path: PathBuf = self.base.join("commits.json");
 
         if let Some(parent) = file_path.parent() {
@@ -100,7 +129,7 @@ impl Output for JsonOutput {
         Ok(())
     }
 
-    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()> {
+    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<(), OutputError> {
         let file_path: PathBuf = self.base.join("commit_tags.json");
 
         if let Some(parent) = file_path.parent() {
@@ -119,7 +148,7 @@ impl Output for JsonOutput {
         metric_name: &str,
         commit: &CommitHash,
         value: &CollectorValue,
-    ) -> Result<()> {
+    ) -> Result<(), OutputError> {
         let file_path = self.get_metric_file(metric_name, commit);
 
         if let Some(parent) = file_path.parent() {
@@ -134,11 +163,11 @@ impl Output for JsonOutput {
         Ok(())
     }
 
-    fn load(&self) -> Result<()> {
+    fn load(&self) -> Result<(), OutputError> {
         Ok(())
     }
 
-    fn flush(&self) -> Result<()> {
+    fn flush(&self) -> Result<(), OutputError> {
         Ok(())
     }
 }
@@ -178,14 +207,18 @@ impl ParquetOutput {
 }
 
 impl Output for ParquetOutput {
-    fn get_metric(&self, metric_name: &str, commit: &CommitHash) -> Result<Option<CollectorValue>> {
+    fn get_metric(
+        &self,
+        metric_name: &str,
+        commit: &CommitHash,
+    ) -> Result<Option<CollectorValue>, OutputError> {
         Ok(self
             .metrics
             .get(metric_name)
             .and_then(|metric| metric.get(commit).cloned()))
     }
 
-    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<()> {
+    fn set_commits(&mut self, commits: &[CommitInfo]) -> Result<(), OutputError> {
         let file_path: PathBuf = self.base.join("commits.parquet");
 
         if let Some(parent) = file_path.parent() {
@@ -215,7 +248,7 @@ impl Output for ParquetOutput {
         Ok(())
     }
 
-    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<()> {
+    fn set_commit_tags(&mut self, commit_tags: &[CommitTagInfo]) -> Result<(), OutputError> {
         let file_path: PathBuf = self.base.join("commit_tags.parquet");
 
         if let Some(parent) = file_path.parent() {
@@ -250,13 +283,13 @@ impl Output for ParquetOutput {
         metric_name: &str,
         commit: &CommitHash,
         value: &CollectorValue,
-    ) -> Result<()> {
+    ) -> Result<(), OutputError> {
         let metric = self.metrics.entry(metric_name.to_string()).or_default();
         metric.insert(commit.clone(), value.clone());
         Ok(())
     }
 
-    fn flush(&self) -> Result<()> {
+    fn flush(&self) -> Result<(), OutputError> {
         for (metric_name, values) in &self.metrics {
             if values.is_empty() {
                 continue;
@@ -285,10 +318,22 @@ impl Output for ParquetOutput {
         Ok(())
     }
 
-    fn load(&self) -> Result<()> {
+    fn load(&self) -> Result<(), OutputError> {
         // Not implemented for now, not really needed since we have the cache too
         Ok(())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum RecordBatchConversionError {
+    #[error("No values to convert")]
+    NoValues,
+
+    #[error("Expected all values to have the same type")]
+    DifferingValueTypes,
+
+    #[error("Serde Arrow error: {0}")]
+    SerdeArrow(#[from] serde_arrow::Error),
 }
 
 macro_rules! to_batch {
@@ -299,7 +344,7 @@ macro_rules! to_batch {
             let inner: $value_type = value
                 .clone()
                 .try_into()
-                .map_err(|_| anyhow::anyhow!("Expected all values to have the same type"))?;
+                .map_err(|_| RecordBatchConversionError::DifferingValueTypes)?;
             $commits.push(commit.clone());
             data.push(inner);
         }
@@ -317,11 +362,13 @@ macro_rules! to_batch {
     }};
 }
 
-fn values_to_record_batch(values: &HashMap<CommitHash, CollectorValue>) -> Result<RecordBatch> {
+fn values_to_record_batch(
+    values: &HashMap<CommitHash, CollectorValue>,
+) -> Result<RecordBatch, RecordBatchConversionError> {
     let mut commits = Vec::new();
 
     let Some(first_record) = values.values().next() else {
-        return Err(anyhow::anyhow!("No values to convert"));
+        return Err(RecordBatchConversionError::NoValues);
     };
 
     let batch = match first_record {

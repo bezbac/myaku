@@ -7,7 +7,6 @@ use std::{
     process::{Command, Stdio},
 };
 
-use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use execute::Execute;
 use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
@@ -15,6 +14,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use ssh_key::{LineEnding, PrivateKey};
+use thiserror::Error;
 use tracing::debug;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -132,18 +132,45 @@ impl From<&RepositoryHandle> for Repository {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum GitError {
+    #[error(".git directory does not exist")]
+    NoGitDirectory,
+
+    #[error("Could not determine remote URL")]
+    FailedToDetermineRemoteURL,
+
+    #[error("Could not determine mainline branch")]
+    FailedToDetermineMainlineBranch,
+
+    #[error("Unexpected tag name format: {tag_name}")]
+    UnexpectedTagNameFormat { tag_name: String },
+
+    #[error("{0}")]
+    CloneError(#[from] GitCloneError),
+
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("Could not parse string: {0}")]
+    StringParsing(#[from] std::string::FromUtf8Error),
+
+    #[error("Git error: {0}")]
+    Git2Erorr(#[from] git2::Error),
+}
+
 impl RepositoryHandle {
-    pub fn open(path: &Path) -> Result<RepositoryHandle> {
+    pub fn open(path: &Path) -> Result<RepositoryHandle, GitError> {
         if path.join(".git").exists() {
             return Ok(RepositoryHandle {
                 path: path.to_path_buf(),
             });
         }
 
-        Err(anyhow::anyhow!(".git directory does not exist"))
+        Err(GitError::NoGitDirectory)
     }
 
-    pub fn fetch(&self) -> Result<()> {
+    pub fn fetch(&self) -> Result<(), GitError> {
         let mut command = Command::new(GIT_BINARY_PATH);
         command.current_dir(&self.path);
         command.arg("fetch");
@@ -152,18 +179,16 @@ impl RepositoryHandle {
         Ok(())
     }
 
-    pub fn remote_url(&self) -> Result<String> {
+    pub fn remote_url(&self) -> Result<String, GitError> {
         let git2_repo: Repository = self.into();
 
         let remote = git2_repo.find_remote("origin")?;
-        let url = remote
-            .url()
-            .ok_or(anyhow::anyhow!("Could not determine remote URL"))?;
+        let url = remote.url().ok_or(GitError::FailedToDetermineRemoteURL)?;
 
         Ok(url.to_string())
     }
 
-    pub fn find_main_branch(&self) -> Result<String> {
+    pub fn find_main_branch(&self) -> Result<String, GitError> {
         let git2_repo: Repository = self.into();
 
         let mut found = Option::None;
@@ -182,15 +207,15 @@ impl RepositoryHandle {
 
         found
             .map(|v| (*v).to_string())
-            .ok_or(anyhow::anyhow!("Could not determine mainline branch"))
+            .ok_or(GitError::FailedToDetermineMainlineBranch)
     }
 
-    pub fn reset_hard(&self, revstring: &str) -> Result<()> {
+    pub fn reset_hard(&self, revstring: &str) -> Result<(), GitError> {
         let main_worktree = self.main_worktree();
         main_worktree.reset_hard(revstring)
     }
 
-    pub fn get_all_commits(&self) -> Result<Vec<CommitInfo>> {
+    pub fn get_all_commits(&self) -> Result<Vec<CommitInfo>, GitError> {
         let git2_repo: Repository = self.into();
 
         let mut revwalk = git2_repo.revwalk().unwrap();
@@ -220,7 +245,7 @@ impl RepositoryHandle {
         Ok(commits)
     }
 
-    pub fn get_all_commit_tags(&self) -> Result<Vec<CommitTagInfo>> {
+    pub fn get_all_commit_tags(&self) -> Result<Vec<CommitTagInfo>, GitError> {
         let git2_repo: Repository = self.into();
 
         let mut tag_ids_and_names: Vec<(Oid, Vec<u8>)> = Vec::new();
@@ -234,10 +259,12 @@ impl RepositoryHandle {
 
         for (tag_id, tag_name) in tag_ids_and_names {
             let tag_name = String::from_utf8(tag_name)?;
-            let tag_name = tag_name.strip_prefix("refs/tags/").ok_or(anyhow::anyhow!(
-                "Tag name has an unexpected format: {}",
+            let tag_name =
                 tag_name
-            ))?;
+                    .strip_prefix("refs/tags/")
+                    .ok_or(GitError::UnexpectedTagNameFormat {
+                        tag_name: tag_name.clone(),
+                    })?;
 
             let Ok(tag) = git2_repo.find_tag(tag_id) else {
                 // The tag id might point to a commit
@@ -268,12 +295,12 @@ impl RepositoryHandle {
         Ok(tags)
     }
 
-    pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
+    pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize), GitError> {
         let main_worktree = self.main_worktree();
         main_worktree.get_current_total_diff_stat()
     }
 
-    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>> {
+    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>, GitError> {
         let main_worktree = self.main_worktree();
         main_worktree.get_current_changed_file_paths()
     }
@@ -282,7 +309,7 @@ impl RepositoryHandle {
         &self,
         worktree_name: &str,
         worktree_path: &Path,
-    ) -> Result<WorktreeHandle> {
+    ) -> Result<WorktreeHandle, GitError> {
         let git2_repo: Repository = self.into();
 
         git2_repo.worktree(worktree_name, worktree_path, None)?;
@@ -311,12 +338,16 @@ impl RepositoryHandle {
         &self,
         worktree_name: &str,
         worktree_path: &Path,
-    ) -> Result<TempWorktreeHandle> {
+    ) -> Result<TempWorktreeHandle, GitError> {
         let worktree = self.create_worktree(worktree_name, worktree_path)?;
         Ok(TempWorktreeHandle { worktree })
     }
 
-    pub fn remove_worktree(&self, worktree_name: &str, force: Option<bool>) -> Result<()> {
+    pub fn remove_worktree(
+        &self,
+        worktree_name: &str,
+        force: Option<bool>,
+    ) -> Result<(), GitError> {
         let mut command = Command::new(GIT_BINARY_PATH);
         command.current_dir(&self.path);
         command.arg("worktree");
@@ -341,7 +372,7 @@ impl<'r> From<&WorktreeHandle<'r>> for Repository {
 }
 
 impl<'r> WorktreeHandle<'r> {
-    pub fn reset_hard(&self, revstring: &str) -> Result<()> {
+    pub fn reset_hard(&self, revstring: &str) -> Result<(), GitError> {
         let git2_repo: Repository = self.into();
 
         let (object, _) = git2_repo.revparse_ext(revstring)?;
@@ -351,14 +382,14 @@ impl<'r> WorktreeHandle<'r> {
         Ok(())
     }
 
-    pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize)> {
+    pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize), GitError> {
         let git2_repo: Repository = self.into();
         let diff = get_current_diff_to_parent(&git2_repo)?;
         let stats = diff.stats()?;
         Ok((stats.files_changed(), stats.insertions(), stats.deletions()))
     }
 
-    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>> {
+    pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>, GitError> {
         let git2_repo: Repository = self.into();
         let diff = get_current_diff_to_parent(&git2_repo)?;
 
@@ -376,11 +407,11 @@ impl<'r> WorktreeHandle<'r> {
         Ok(changed_files)
     }
 
-    pub fn remove(self) -> Result<()> {
+    pub fn remove(self) -> Result<(), GitError> {
         self.repo.remove_worktree(&self.name, Some(false))
     }
 
-    pub fn list_files(&self) -> Result<Vec<String>> {
+    pub fn list_files(&self) -> Result<Vec<String>, GitError> {
         let git2_repo: Repository = self.into();
         let mut files = Vec::new();
 
@@ -396,7 +427,7 @@ impl<'r> WorktreeHandle<'r> {
     }
 }
 
-fn get_current_diff_to_parent(repo: &Repository) -> Result<Diff<'_>> {
+fn get_current_diff_to_parent(repo: &Repository) -> Result<Diff<'_>, GitError> {
     // To diff the first commit in a repository, we need something to diff it against other than it's parent
     // This object is the empty tree. See https://stackoverflow.com/a/40884093 for more details.
     let empty_tree = repo.find_tree(Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?)?;
@@ -437,7 +468,7 @@ pub enum CloneProgress {
 }
 
 impl CloneProgress {
-    fn try_from(line: &str) -> Result<CloneProgress> {
+    fn try_from(line: &str) -> Result<CloneProgress, GitCloneError> {
         if line.starts_with("Enumerating objects:") {
             return Ok(CloneProgress::EnumeratingObjects);
         }
@@ -451,7 +482,7 @@ impl CloneProgress {
 
             let progress = re
                 .find(line)
-                .ok_or(anyhow::anyhow!("Could not find progress in line"))?;
+                .ok_or(GitCloneError::FailedToMatchProgress(line.to_string()))?;
 
             let (finished, total) = {
                 let mut tmp = progress.as_str().split('(');
@@ -480,10 +511,7 @@ impl CloneProgress {
             }
         }
 
-        Err(anyhow::anyhow!(
-            "Could not parse git progress from line: {}",
-            line
-        ))
+        Err(GitCloneError::FailedToMatchProgress(line.to_string()))
     }
 }
 
@@ -574,7 +602,7 @@ impl<R> From<BufReader<R>> for BufReaderWithDelimitedBy<R> {
     }
 }
 
-pub fn create_temp_ssh_key_file(ssh_key: &PrivateKey) -> Result<PathBuf> {
+pub fn create_temp_ssh_key_file(ssh_key: &PrivateKey) -> Result<PathBuf, ssh_key::Error> {
     let filename = format!(
         "{}.key",
         &rand::thread_rng()
@@ -590,12 +618,36 @@ pub fn create_temp_ssh_key_file(ssh_key: &PrivateKey) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[derive(Error, Debug)]
+pub enum GitCloneError {
+    #[error("The command exited with code {0}")]
+    NonZeroExitCode(std::process::ExitStatus),
+
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("SSH key error: {0}")]
+    SSHKey(#[from] ssh_key::Error),
+
+    #[error("Regex error: {0}")]
+    Regex(#[from] regex::Error),
+
+    #[error("Failed to match progress from line {0}")]
+    FailedToMatchProgress(String),
+
+    #[error("Failed to parse int: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Failed to process command output line: {0}")]
+    FailedToProcessCommandOutput(String),
+}
+
 pub fn clone_repository(
     url: &str,
     directory: &PathBuf,
     progress_callback: impl Fn(&CloneProgress),
     ssh_key: &Option<PrivateKey>,
-) -> Result<RepositoryHandle> {
+) -> Result<RepositoryHandle, GitCloneError> {
     let mut command = Command::new(GIT_BINARY_PATH);
     command.arg("clone");
     command.arg(url);
@@ -642,7 +694,7 @@ pub fn clone_repository(
 
     if !exit.success() {
         debug!("{}", lines.join("\n"));
-        return Err(anyhow::anyhow!("Git clone was unsuccessful"));
+        return Err(GitCloneError::NonZeroExitCode(exit));
     }
 
     Ok(RepositoryHandle {

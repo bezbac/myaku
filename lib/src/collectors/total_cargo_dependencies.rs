@@ -4,11 +4,11 @@ use std::{
     io::{BufReader, Read},
 };
 
-use anyhow::Result;
 use cargo_lock::Lockfile;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{
     config::CollectorConfig,
@@ -18,8 +18,8 @@ use crate::{
 
 use super::{
     changed_files::ChangedFilesValue,
-    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
-    BaseCollector, CollectorValue,
+    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node, LookupError},
+    BaseCollector, CollectorValue, CollectorValueCastError,
 };
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash)]
@@ -48,14 +48,37 @@ impl std::hash::Hash for CargoLockPackage {
 }
 
 #[derive(Debug)]
-pub(super) struct TotalCargoDependencies;
+pub(crate) struct TotalCargoDependencies;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotalCargoDependenciesValue {
     total_dependencies: u32,
 }
 
+#[derive(Error, Debug)]
+pub enum TotalCargoDependenciesError {
+    #[error("{0}")]
+    Lookup(#[from] LookupError),
+
+    #[error("{0}")]
+    Cast(#[from] CollectorValueCastError),
+
+    #[error("{0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Lockfile(#[from] cargo_lock::Error),
+
+    #[error("{0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error("{0}")]
+    TomlDeserializationError(#[from] toml::de::Error),
+}
+
 impl BaseCollector for TotalCargoDependencies {
+    type Error = TotalCargoDependenciesError;
+
     #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
@@ -63,7 +86,7 @@ impl BaseCollector for TotalCargoDependencies {
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: NodeIndex,
-    ) -> Result<CollectorValue> {
+    ) -> Result<CollectorValue, TotalCargoDependenciesError> {
         let changed_files_in_current_commit_value: ChangedFilesValue =
             get_value_of_preceeding_node(
                 storage,

@@ -1,11 +1,11 @@
 use std::{collections::HashSet, io::BufWriter};
 
-use anyhow::Result;
 use dashmap::DashMap;
 use globset::{Candidate, Glob, GlobSetBuilder};
 use grep::{printer::JSON, regex::RegexMatcher, searcher::SearcherBuilder};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::{debug, warn};
 use walkdir::WalkDir;
 
@@ -17,8 +17,8 @@ use crate::{
 
 use super::{
     changed_files::ChangedFilesValue,
-    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node},
-    BaseCollector, CollectorValue,
+    utils::{get_previous_commit_value_of_collector, get_value_of_preceeding_node, LookupError},
+    BaseCollector, CollectorValue, CollectorValueCastError,
 };
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ enum PartialGrepJSONLine {
 }
 
 #[derive(Debug)]
-pub struct PatternOccurences {
+pub(crate) struct PatternOccurences {
     pub pattern: String,
     pub files: Option<Vec<Glob>>,
 }
@@ -65,7 +65,9 @@ fn get_matches_from_grep_output(output: &str) -> HashSet<PartialMatchData> {
         .collect()
 }
 
-fn get_matches_from_sink(sink: JSON<BufWriter<Vec<u8>>>) -> Result<HashSet<PartialMatchData>> {
+fn get_matches_from_sink(
+    sink: JSON<BufWriter<Vec<u8>>>,
+) -> Result<HashSet<PartialMatchData>, PatternOccurencesError> {
     let bytes = sink.into_inner().into_inner()?;
     let ripgrep_output = String::from_utf8(bytes)?;
 
@@ -79,7 +81,36 @@ pub struct PatternOccurencesValue {
     pub matches: HashSet<PartialMatchData>,
 }
 
+#[derive(Error, Debug)]
+pub enum PatternOccurencesError {
+    #[error("{0}")]
+    Lookup(#[from] LookupError),
+
+    #[error("{0}")]
+    Cast(#[from] CollectorValueCastError),
+
+    #[error("{0}")]
+    Regex(#[from] grep::regex::Error),
+
+    #[error("{0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("{0}")]
+    IntoInner(#[from] std::io::IntoInnerError<BufWriter<Vec<u8>>>),
+
+    #[error("{0}")]
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
+
+    #[error("{0}")]
+    Walkdir(#[from] walkdir::Error),
+
+    #[error("{0}")]
+    StripPrefixError(#[from] std::path::StripPrefixError),
+}
+
 impl BaseCollector for PatternOccurences {
+    type Error = PatternOccurencesError;
+
     #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
@@ -87,7 +118,7 @@ impl BaseCollector for PatternOccurences {
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: NodeIndex,
-    ) -> Result<CollectorValue> {
+    ) -> Result<CollectorValue, PatternOccurencesError> {
         let changed_files_in_current_commit_value: ChangedFilesValue =
             get_value_of_preceeding_node(
                 storage,

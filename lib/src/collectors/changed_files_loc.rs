@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
 use dashmap::DashMap;
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokei::LanguageType;
 use tracing::warn;
 
@@ -14,17 +14,28 @@ use crate::{
     graph::CollectionExecutionGraph,
 };
 
-use super::{BaseCollector, CollectorValue};
+use super::{utils::LookupError, BaseCollector, CollectorValue, CollectorValueCastError};
 
 #[derive(Debug)]
-pub(super) struct ChangedFilesLoc;
+pub(crate) struct ChangedFilesLoc;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChangedFilesLocValue {
     pub files: HashMap<String, Option<usize>>,
 }
 
+#[derive(Error, Debug)]
+pub enum ChangedFilesLocError {
+    #[error("{0}")]
+    Lookup(#[from] LookupError),
+
+    #[error("{0}")]
+    Cast(#[from] CollectorValueCastError),
+}
+
 impl BaseCollector for ChangedFilesLoc {
+    type Error = ChangedFilesLocError;
+
     #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
@@ -32,7 +43,7 @@ impl BaseCollector for ChangedFilesLoc {
         repo: &mut WorktreeHandle,
         graph: &CollectionExecutionGraph,
         current_node_idx: NodeIndex,
-    ) -> Result<CollectorValue> {
+    ) -> Result<CollectorValue, ChangedFilesLocError> {
         let changed_files_in_current_commit_value: ChangedFilesValue =
             get_value_of_preceeding_node(
                 storage,

@@ -3,10 +3,9 @@ use std::fs::{self};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
-use collectors::{Collector, CollectorValue};
+use collectors::{BaseCollector, Collector, CollectorValue, DerivedCollector};
 use dashmap::DashMap;
-use git::CommitInfo;
+use git::{CommitInfo, GitError};
 use graph::CollectionExecutionGraph;
 use nanoid::nanoid;
 use object_pool::Pool;
@@ -15,6 +14,7 @@ use petgraph::visit::Walker;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use ssh_key::PrivateKey;
+use thiserror::Error;
 use tracing::{debug, span, Level};
 
 use crate::git::clone_repository;
@@ -33,6 +33,42 @@ pub use cache::{Cache, FileCache};
 pub use config::{CollectorConfig, Frequency, GitRepository, MetricConfig};
 pub use git::CloneProgress;
 pub use output::{JsonOutput, Output, ParquetOutput};
+
+#[derive(Error, Debug)]
+pub enum CollectionProcessError {
+    #[error("No metrics configured")]
+    NoMetrics,
+
+    #[error("No commits found")]
+    NoCommits,
+
+    #[error("Repository URL in reference directory does not match the one in the config file")]
+    MismatchedRepositoryUrl,
+
+    #[error("Invalid state. Expected one of {0:?}")]
+    InvalidState(Vec<String>),
+
+    #[error("{0}")]
+    BaseCollectorError(#[from] collectors::BaseCollectorError),
+
+    #[error("{0}")]
+    DerivedCollectorError(#[from] collectors::DerivedCollectorError),
+
+    #[error("{0}")]
+    Output(#[from] output::OutputError),
+
+    #[error("{0}")]
+    Cache(#[from] cache::CacheError),
+
+    #[error("{0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Git(#[from] git::GitError),
+
+    #[error("{0}")]
+    Send(#[from] std::sync::mpsc::SendError<ExecutionProgressCallbackState>),
+}
 
 pub struct Initial {
     shared: SharedCollectionProcessState,
@@ -142,9 +178,9 @@ impl Initial {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn initialize(self) -> Result<CollectionProcess> {
+    pub fn initialize(self) -> Result<CollectionProcess, CollectionProcessError> {
         if self.shared.metrics.is_empty() {
-            return Err(anyhow::anyhow!("No metrics configured"));
+            return Err(CollectionProcessError::NoMetrics);
         }
 
         let reference_dir = &self.shared.repository_path;
@@ -155,7 +191,7 @@ impl Initial {
             Result::Ok(repo) => {
                 let remote_url = repo.remote_url()?;
                 if remote_url != self.shared.reference.url {
-                    return Err(anyhow::anyhow!("Repository URL in reference directory does not match the one in the config file"));
+                    return Err(CollectionProcessError::MismatchedRepositoryUrl);
                 }
 
                 Ok(CollectionProcess::ReadyForFetch(ReadyForFetch {
@@ -180,7 +216,7 @@ impl Initial {
 
 impl ReadyForFetch {
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn fetch(self) -> Result<IdleWithoutCommits> {
+    pub fn fetch(self) -> Result<IdleWithoutCommits, CollectionProcessError> {
         self.repo.fetch()?;
         Ok(IdleWithoutCommits {
             shared: self.shared,
@@ -189,7 +225,7 @@ impl ReadyForFetch {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn skip(self) -> Result<IdleWithoutCommits> {
+    pub fn skip(self) -> Result<IdleWithoutCommits, CollectionProcessError> {
         Ok(IdleWithoutCommits {
             shared: self.shared,
             repo: self.repo,
@@ -199,13 +235,18 @@ impl ReadyForFetch {
 
 impl ReadyForClone {
     #[tracing::instrument(level = "trace", skip(self, callback))]
-    pub fn clone(self, callback: impl Fn(&CloneProgress)) -> Result<IdleWithoutCommits> {
+    pub fn clone(
+        self,
+        callback: impl Fn(&CloneProgress),
+    ) -> Result<IdleWithoutCommits, CollectionProcessError> {
         let repo = clone_repository(
             &self.shared.reference.url,
             &self.shared.repository_path,
             callback,
             &self.shared.ssh_key,
-        )?;
+        )
+        .map_err(|e| CollectionProcessError::Git(GitError::CloneError(e)))?;
+
         Ok(IdleWithoutCommits {
             shared: self.shared,
             repo,
@@ -215,7 +256,7 @@ impl ReadyForClone {
 
 impl IdleWithoutCommits {
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn collect_commits(mut self) -> Result<IdleWithCommits> {
+    pub fn collect_commits(mut self) -> Result<IdleWithCommits, CollectionProcessError> {
         let branch = match &self.shared.reference.branch {
             Some(branch) => branch.clone(),
             None => self.repo.find_main_branch()?,
@@ -226,7 +267,7 @@ impl IdleWithoutCommits {
         let commits = self.repo.get_all_commits()?;
 
         if commits.is_empty() {
-            return Err(anyhow::anyhow!("No commits found"));
+            return Err(CollectionProcessError::NoCommits);
         }
 
         self.shared.output.set_commits(&commits)?;
@@ -242,7 +283,7 @@ impl IdleWithoutCommits {
 
 impl IdleWithCommits {
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn collect_tags(mut self) -> Result<IdleWithCommits> {
+    pub fn collect_tags(mut self) -> Result<IdleWithCommits, CollectionProcessError> {
         let branch = match &self.shared.reference.branch {
             Some(branch) => branch.clone(),
             None => self.repo.find_main_branch()?,
@@ -257,7 +298,7 @@ impl IdleWithCommits {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn prepare_for_collection(self) -> Result<ReadyForCollection> {
+    pub fn prepare_for_collection(self) -> Result<ReadyForCollection, CollectionProcessError> {
         if !self.shared.disable_cache {
             self.shared.output.load()?;
 
@@ -276,7 +317,7 @@ impl IdleWithCommits {
             &self.shared.metrics,
             &self.commits,
             self.shared.force_latest_commit,
-        )?;
+        );
 
         if !self.shared.disable_cache {
             // Fill storage from cache
@@ -301,7 +342,7 @@ impl IdleWithCommits {
             .iter()
             .max_by(|a, b| a.time.cmp(&b.time))
             .map(|c| c.id.clone())
-            .ok_or(anyhow::anyhow!("No commits found"))?;
+            .ok_or(CollectionProcessError::NoCommits)?;
 
         Ok(ReadyForCollection {
             shared: self.shared,
@@ -318,7 +359,7 @@ impl ReadyForCollection {
     pub fn collect_metrics(
         self,
         channel: Option<std::sync::mpsc::Sender<ExecutionProgressCallbackState>>,
-    ) -> Result<PostCollection> {
+    ) -> Result<PostCollection, CollectionProcessError> {
         let alphabet: [char; 16] = [
             '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
         ];
@@ -366,9 +407,9 @@ impl ReadyForCollection {
             })?;
         }
 
-        let _: Vec<Result<()>> = iter
+        let _: Vec<Result<(), CollectionProcessError>> = iter
             .cloned()
-            .map(|task_indices| -> Result<()> {
+            .map(|task_indices| -> Result<(), CollectionProcessError> {
                 for task_idx in task_indices {
                     let task = &self.collection_execution_graph.graph[task_idx];
 
@@ -449,7 +490,7 @@ impl ReadyForCollection {
 
 impl PostCollection {
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn write_to_cache(self) -> Result<PostCollection> {
+    pub fn write_to_cache(self) -> Result<PostCollection, CollectionProcessError> {
         if !self.shared.disable_cache {
             for nx in self.collection_execution_graph.graph.node_indices() {
                 let task = &self.collection_execution_graph.graph[nx];
@@ -469,7 +510,7 @@ impl PostCollection {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn write_to_output(mut self) -> Result<PostCollection> {
+    pub fn write_to_output(mut self) -> Result<PostCollection, CollectionProcessError> {
         for e in &self.storage {
             let (collector, commit) = e.key();
             let value = e.value();
@@ -493,9 +534,11 @@ impl PostCollection {
 }
 
 impl CollectionProcess {
-    pub fn run_to_completion(self) -> Result<PostCollection> {
+    pub fn run_to_completion(self) -> Result<PostCollection, CollectionProcessError> {
         let CollectionProcess::Initial(process) = self else {
-            return Err(anyhow::anyhow!("Invalid state"));
+            return Err(CollectionProcessError::InvalidState(vec![
+                "Initial".to_string()
+            ]));
         };
 
         let process = process.initialize()?;
@@ -503,7 +546,12 @@ impl CollectionProcess {
         let process = match process {
             CollectionProcess::ReadyForFetch(process) => process.fetch()?,
             CollectionProcess::ReadyForClone(process) => process.clone(|_| {})?,
-            _ => return Err(anyhow::anyhow!("Invalid state")),
+            _ => {
+                return Err(CollectionProcessError::InvalidState(vec![
+                    "ReadyForFetch".to_string(),
+                    "ReadyForClone".to_string(),
+                ]))
+            }
         };
 
         let process = process

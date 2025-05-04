@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
 use chrono::{Datelike, Timelike};
 use petgraph::{graph::NodeIndex, Graph};
 
@@ -35,11 +34,11 @@ pub fn add_task(
     current_commit_hash: &CommitHash,
     previous_commit_hash: Option<&CommitHash>,
     previous_commit_distance: usize,
-) -> Result<NodeIndex> {
+) -> NodeIndex {
     if let Some(node_idx) =
         created_tasks.get(&(collector_config.clone(), current_commit_hash.clone()))
     {
-        return Ok(*node_idx);
+        return *node_idx;
     }
 
     let node_idx = graph.add_node(CollectionTask {
@@ -69,7 +68,7 @@ pub fn add_task(
                 current_commit_hash,
                 previous_commit_hash,
                 previous_commit_distance,
-            )?;
+            );
 
             graph.add_edge(
                 dependency_node_idx,
@@ -81,7 +80,8 @@ pub fn add_task(
             pattern: _,
             files: _,
         }
-        | CollectorConfig::TotalCargoDeps => {
+        | CollectorConfig::TotalCargoDeps
+        | CollectorConfig::ChangedFilesLoc => {
             let dependency_node_idx = add_task(
                 graph,
                 created_tasks,
@@ -89,7 +89,7 @@ pub fn add_task(
                 current_commit_hash,
                 previous_commit_hash,
                 previous_commit_distance,
-            )?;
+            );
 
             graph.add_edge(
                 dependency_node_idx,
@@ -105,7 +105,7 @@ pub fn add_task(
                 current_commit_hash,
                 previous_commit_hash,
                 previous_commit_distance,
-            )?;
+            );
 
             graph.add_edge(
                 dependency_node_idx,
@@ -121,23 +121,7 @@ pub fn add_task(
                 current_commit_hash,
                 previous_commit_hash,
                 previous_commit_distance,
-            )?;
-
-            graph.add_edge(
-                dependency_node_idx,
-                node_idx,
-                CollectionGraphEdge { distance: 0 },
             );
-        }
-        CollectorConfig::ChangedFilesLoc => {
-            let dependency_node_idx = add_task(
-                graph,
-                created_tasks,
-                &CollectorConfig::ChangedFiles,
-                current_commit_hash,
-                previous_commit_hash,
-                previous_commit_distance,
-            )?;
 
             graph.add_edge(
                 dependency_node_idx,
@@ -162,7 +146,7 @@ pub fn add_task(
         }
     }
 
-    Ok(node_idx)
+    node_idx
 }
 
 pub fn build_collection_execution_graph(
@@ -171,7 +155,7 @@ pub fn build_collection_execution_graph(
     // Create a task for every metric for the latest commit,
     // regardless of the frequency specified in the metric config
     force_latest_commit: bool,
-) -> Result<CollectionExecutionGraph> {
+) -> CollectionExecutionGraph {
     let mut graph: Graph<CollectionTask, CollectionGraphEdge> = Graph::new();
 
     let mut sorted_commits = commits.to_vec();
@@ -235,13 +219,13 @@ pub fn build_collection_execution_graph(
                 current_commit_hash,
                 previous_commit.map(|c| &c.id),
                 distance,
-            )?;
+            );
 
             previous_commit = Some(current_commit);
         }
     }
 
-    Ok(CollectionExecutionGraph { graph })
+    CollectionExecutionGraph { graph }
 }
 
 #[cfg(test)]
@@ -308,7 +292,7 @@ mod test {
             create_dummy_commit("5", "2012-12-16T00:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false);
 
         assert_node_commit_hashes(&result.graph, &["1", "2", "3", "4", "5"]);
     }
@@ -339,7 +323,7 @@ mod test {
             create_dummy_commit("5.1", "2012-12-16T01:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2", "3.0", "4", "5.0"]);
     }
@@ -365,7 +349,7 @@ mod test {
             create_dummy_commit("4.0", "2024-07-24T00:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0"]);
     }
@@ -392,7 +376,7 @@ mod test {
             create_dummy_commit("4.1", "2013-05-19T10:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0"]);
     }
@@ -419,7 +403,7 @@ mod test {
             create_dummy_commit("2014#3", "2014-03-01T14:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, false).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, false);
 
         assert_node_commit_hashes(&result.graph, &["2012#1", "2013#1", "2014#1"]);
     }
@@ -444,7 +428,7 @@ mod test {
             create_dummy_commit("5", "2012-12-16T00:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, true);
 
         assert_node_commit_hashes(&result.graph, &["1", "2", "3", "4", "5"]);
     }
@@ -475,7 +459,7 @@ mod test {
             create_dummy_commit("5.1", "2012-12-16T01:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, true);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2", "3.0", "4", "5.0", "5.1"]);
     }
@@ -502,7 +486,7 @@ mod test {
             create_dummy_commit("4.1", "2024-07-24T01:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, true);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0", "4.1"]);
     }
@@ -529,7 +513,7 @@ mod test {
             create_dummy_commit("4.1", "2013-05-19T10:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, true);
 
         assert_node_commit_hashes(&result.graph, &["1.0", "2.0", "3.0", "4.0", "4.1"]);
     }
@@ -556,7 +540,7 @@ mod test {
             create_dummy_commit("2014#3", "2014-03-01T14:00:00Z"),
         ];
 
-        let result = build_collection_execution_graph(&metrics, &commits, true).unwrap();
+        let result = build_collection_execution_graph(&metrics, &commits, true);
 
         assert_node_commit_hashes(&result.graph, &["2012#1", "2013#1", "2014#1", "2014#3"]);
     }
