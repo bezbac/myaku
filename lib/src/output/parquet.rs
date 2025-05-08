@@ -15,9 +15,10 @@ use thiserror::Error;
 
 use crate::{
     collectors::{
-        ChangedFilesLocValue, ChangedFilesValue, CollectorValue, FileListValue, LocValue,
-        PatternOccurencesValue, TotalCargoDependenciesValue, TotalDiffStatValue,
-        TotalFileCountValue, TotalLocValue, TotalPatternOccurencesValue,
+        ChangedFilesLocValue, ChangedFilesValue, CollectorValue, FileListValue,
+        GritQLPatternOccurencesValue, LocValue, PatternOccurencesValue,
+        TotalCargoDependenciesValue, TotalDiffStatValue, TotalFileCountValue, TotalLocValue,
+        TotalPatternOccurencesValue,
     },
     git::{CommitHash, CommitInfo, CommitTagInfo},
 };
@@ -252,6 +253,9 @@ fn values_to_record_batch(
         }
         CollectorValue::PatternOccurences(_) => {
             to_batch!(values, commits, PatternOccurencesValue)
+        }
+        CollectorValue::GritQLPatternOccurences(_) => {
+            to_batch!(values, commits, GritQLPatternOccurencesValue)
         }
         CollectorValue::TotalCargoDependencies(_) => {
             to_batch!(values, commits, TotalCargoDependenciesValue)

@@ -2,6 +2,7 @@ use changed_files::{ChangedFiles, ChangedFilesError};
 use changed_files_loc::{ChangedFilesLoc, ChangedFilesLocError};
 use dashmap::DashMap;
 use file_list::{FileList, FileListError};
+use gritql_pattern_occurences::{GritQLPatternOccurences, GritQLPatternOccurencesError};
 use loc::{Loc, LocError};
 use pattern_occurences::{PatternOccurences, PatternOccurencesError};
 use petgraph::graph::NodeIndex;
@@ -22,6 +23,7 @@ use crate::{
 mod changed_files;
 mod changed_files_loc;
 mod file_list;
+mod gritql_pattern_occurences;
 mod loc;
 mod pattern_occurences;
 mod total_cargo_dependencies;
@@ -34,6 +36,7 @@ mod utils;
 pub use changed_files::ChangedFilesValue;
 pub use changed_files_loc::ChangedFilesLocValue;
 pub use file_list::FileListValue;
+pub use gritql_pattern_occurences::GritQLPatternOccurencesValue;
 pub use loc::LocValue;
 pub use pattern_occurences::PatternOccurencesValue;
 pub use total_cargo_dependencies::TotalCargoDependenciesValue;
@@ -48,6 +51,7 @@ pub enum CollectorValue {
     ChangedFiles(changed_files::ChangedFilesValue),
     Loc(loc::LocValue),
     PatternOccurences(pattern_occurences::PatternOccurencesValue),
+    GritQLPatternOccurences(gritql_pattern_occurences::GritQLPatternOccurencesValue),
     TotalCargoDependencies(total_cargo_dependencies::TotalCargoDependenciesValue),
     TotalDiffStat(total_diff_stat::TotalDiffStatValue),
     TotalLoc(total_loc::TotalLocValue),
@@ -72,6 +76,10 @@ impl_from!(loc::LocValue, Loc);
 impl_from!(
     pattern_occurences::PatternOccurencesValue,
     PatternOccurences
+);
+impl_from!(
+    gritql_pattern_occurences::GritQLPatternOccurencesValue,
+    GritQLPatternOccurences
 );
 impl_from!(
     total_cargo_dependencies::TotalCargoDependenciesValue,
@@ -119,6 +127,10 @@ impl_try_into!(
     PatternOccurences
 );
 impl_try_into!(
+    gritql_pattern_occurences::GritQLPatternOccurencesValue,
+    GritQLPatternOccurences
+);
+impl_try_into!(
     total_cargo_dependencies::TotalCargoDependenciesValue,
     TotalCargoDependencies
 );
@@ -148,6 +160,9 @@ pub enum BaseCollectorError {
 
     #[error("{0}")]
     PatternOccurences(pattern_occurences::PatternOccurencesError),
+
+    #[error("{0}")]
+    GritQLPatternOccurences(gritql_pattern_occurences::GritQLPatternOccurencesError),
 
     #[error("{0}")]
     TotalCargoDependencies(total_cargo_dependencies::TotalCargoDependenciesError),
@@ -183,6 +198,12 @@ impl From<LocError> for BaseCollectorError {
 impl From<PatternOccurencesError> for BaseCollectorError {
     fn from(value: PatternOccurencesError) -> Self {
         BaseCollectorError::PatternOccurences(value)
+    }
+}
+
+impl From<GritQLPatternOccurencesError> for BaseCollectorError {
+    fn from(value: GritQLPatternOccurencesError) -> Self {
+        BaseCollectorError::GritQLPatternOccurences(value)
     }
 }
 
@@ -235,6 +256,7 @@ pub(crate) enum BaseCollectorObj {
     FileList(FileList),
     Loc(Loc),
     PatternOccurences(PatternOccurences),
+    GritQLPatternOccurences(GritQLPatternOccurences),
     TotalCargoDependencies(TotalCargoDependencies),
     TotalDiffStat(TotalDiffStat),
 }
@@ -263,6 +285,9 @@ impl BaseCollector for BaseCollectorObj {
                 .collect(storage, repo, graph, current_node_idx)
                 .map_err(|err| err.into()),
             BaseCollectorObj::PatternOccurences(collector) => collector
+                .collect(storage, repo, graph, current_node_idx)
+                .map_err(|err| err.into()),
+            BaseCollectorObj::GritQLPatternOccurences(collector) => collector
                 .collect(storage, repo, graph, current_node_idx)
                 .map_err(|err| err.into()),
             BaseCollectorObj::TotalCargoDependencies(collector) => collector
@@ -358,6 +383,14 @@ impl From<&CollectorConfig> for Collector {
                     files: files.clone(),
                 }),
             ),
+            CollectorConfig::GritQLPatternOccurences { pattern, files } => {
+                Collector::Base(BaseCollectorObj::GritQLPatternOccurences(
+                    gritql_pattern_occurences::GritQLPatternOccurences {
+                        pattern: pattern.clone(),
+                        files: files.clone(),
+                    },
+                ))
+            }
             CollectorConfig::TotalPatternOccurences { pattern, files } => {
                 Collector::Derived(DerivedCollectorObj::TotalPatternOccurences(
                     total_pattern_occurences::TotalPatternOccurences {

@@ -22,6 +22,11 @@ pub enum CollectorConfig {
         pattern: String,
         files: Option<Vec<Glob>>,
     },
+    #[serde(rename = "gritql-pattern-occurences")]
+    GritQLPatternOccurences {
+        pattern: String,
+        files: Option<Vec<Glob>>,
+    },
     #[serde(rename = "changed-files")]
     ChangedFiles,
     #[serde(rename = "file-list")]

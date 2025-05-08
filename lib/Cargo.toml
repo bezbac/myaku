@@ -32,6 +32,10 @@ tokei = "12.1.2"
 toml = "0.8.8"
 tracing = "0.1.40"
 walkdir = "2.5.0"
+marzano-core = { git = "https://github.com/getgrit/gritql.git", package = "marzano-core" }
+marzano-language = { git = "https://github.com/getgrit/gritql.git", package = "marzano-language", features = [
+    "finder",
+] }
 
 [features]
 default = ["rayon"]
