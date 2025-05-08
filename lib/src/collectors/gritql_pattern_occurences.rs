@@ -1,27 +1,11 @@
-use std::{
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicI32, Ordering},
-        mpsc, Mutex,
-    },
-};
-
 use dashmap::DashMap;
-use marzano_core::{
-    api::{is_match, MatchResult},
-    pattern_compiler::CompiledPatternBuilder,
-};
-use marzano_language::target_language::expand_paths;
+use marzano_core::pattern_compiler::CompiledPatternBuilder;
 use marzano_language::target_language::TargetLanguage;
-use marzano_util::{
-    cache::NullCache,
-    rich_path::{RichFile, RichPath},
-    runtime::ExecutionContext,
-};
+use marzano_util::{rich_path::RichFile, runtime::ExecutionContext};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::debug;
+use walkdir::WalkDir;
 
 use crate::{
     config::{CollectorConfig, GritQLLanguage},
@@ -58,7 +42,10 @@ pub enum GritQLPatternOccurencesError {
     Marzano(anyhow::Error),
 
     #[error("{0}")]
-    Ignore(#[from] ignore::Error),
+    IO(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Walkdir(#[from] walkdir::Error),
 }
 
 impl BaseCollector for GritQLPatternOccurences {
@@ -73,7 +60,6 @@ impl BaseCollector for GritQLPatternOccurences {
         _current_node_idx: NodeIndex,
     ) -> Result<CollectorValue, GritQLPatternOccurencesError> {
         let language: TargetLanguage = (&self.language).into();
-        let paths: Vec<PathBuf> = vec![repo.path.clone()];
 
         dbg!("Compliting pattern");
 
@@ -90,97 +76,61 @@ impl BaseCollector for GritQLPatternOccurences {
 
         let compiled = compilation_result.problem;
 
-        dbg!(&compiled);
+        dbg!("Walking paths");
 
-        let (file_paths_tx, file_paths_rx) = mpsc::channel();
+        let root_path = &repo.path.canonicalize()?;
 
-        let file_walker = expand_paths(&paths, Some(&[(&compiled.language).into()]))
-            .map_err(|err| GritQLPatternOccurencesError::Marzano(err))?;
+        let mut found_paths = Vec::new();
 
-        // TODO: Use walkdir instead of ignore
-        for file in file_walker {
-            let file = file?;
+        for entry in WalkDir::new(root_path).into_iter().filter_entry(|e| {
+            // Skip .git directory
+            let is_dot_git_dir = e
+                .file_name()
+                .to_str()
+                .is_some_and(|s| s.starts_with(".git"));
 
-            if file.file_type().unwrap().is_dir() {
+            !is_dot_git_dir
+        }) {
+            let entry = entry?;
+
+            if !entry.file_type().is_file() {
                 continue;
             }
 
-            if !paths.contains(&file.path().to_path_buf()) {
-                let ext = file
-                    .path()
-                    .extension()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap_or_default();
-                if !&compiled.language.match_extension(ext) {
-                    // only skip the file if it was discovered by the walker
-                    // don't skip if it was explicitly passed in as a path
-                    // https://github.com/getgrit/gritql/issues/485
-                    continue;
-                }
+            let ext = entry
+                .path()
+                .extension()
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default();
+
+            if !&compiled.language.match_extension(ext) {
+                continue;
             }
 
-            file_paths_tx.send(file.path().to_path_buf()).unwrap();
+            found_paths.push(entry.into_path());
         }
 
-        let found_paths = file_paths_rx.iter().collect::<Vec<_>>();
+        dbg!(&found_paths);
 
-        let found_paths_count = found_paths.len();
-
-        let (tx, rx) = mpsc::channel::<Vec<MatchResult>>();
-
-        let matched = AtomicI32::new(0);
-        let processed = AtomicI32::new(0);
-        // let matches: Mutex<Vec<MatchResult>> = Mutex::new(Vec::new());
-        let cache = NullCache::new();
         let context = ExecutionContext::new();
 
-        let files: Vec<RichPath> = found_paths
-            .into_iter()
-            .map(|path| RichPath::new(path, None))
-            .collect();
+        for file in &found_paths {
+            let file_name = file
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
 
-        dbg!(&files);
+            let content = std::fs::read_to_string(file)?;
 
-        let res = compiled.execute_paths(files.iter().collect(), &context);
+            let rich_file = RichFile::new(file_name, content);
 
-        dbg!(res);
+            let matches = compiled.execute_file(&rich_file, &context);
 
-        // rayon::scope(|s| {
-        //     s.spawn(|_| {
-        //         for message in rx {
-        //             for r in message {
-        //                 if is_match(&r) {
-        //                     let count = r.get_ranges().map(|ranges| ranges.len()).unwrap_or(0);
-        //                     matched.fetch_add(count.max(1) as i32, Ordering::SeqCst);
-
-        //                     dbg!(r);
-        //                 }
-
-        //                 if let MatchResult::DoneFile(_) = r {
-        //                     processed.fetch_add(1, Ordering::SeqCst);
-        //                 }
-
-        //                 // TODO: Handle other match result types
-
-        //                 // TODO: Don't use unwrap here
-        //                 // let mut matches = matches.lock().unwrap();
-        //                 // matches.push(r);
-        //             }
-        //         }
-        //     });
-
-        //     let task_span = tracing::info_span!("apply_file_one_streaming").entered();
-        //     task_span.in_scope(|| {
-        //         compiled.execute_paths_streaming(found_paths, &context, tx, &cache);
-
-        //         loop {
-        //             if processed.load(Ordering::SeqCst) >= found_paths_count.try_into().unwrap() {
-        //                 break;
-        //             }
-        //         }
-        //     });
-        // });
+            dbg!(matches);
+        }
 
         let value = GritQLPatternOccurencesValue {};
 
