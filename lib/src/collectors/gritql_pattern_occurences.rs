@@ -1,37 +1,65 @@
 use std::{
-    collections::{BTreeMap, HashMap},
     path::PathBuf,
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        mpsc, Mutex,
+    },
 };
 
 use dashmap::DashMap;
-use globset::Glob;
-use marzano_core::{api::MatchResult, pattern_compiler::CompiledPatternBuilder};
+use marzano_core::{
+    api::{is_match, MatchResult},
+    pattern_compiler::CompiledPatternBuilder,
+};
 use marzano_language::target_language::expand_paths;
 use marzano_language::target_language::TargetLanguage;
+use marzano_util::{
+    cache::NullCache,
+    rich_path::{RichFile, RichPath},
+    runtime::ExecutionContext,
+};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::debug;
 
 use crate::{
-    config::CollectorConfig,
+    config::{CollectorConfig, GritQLLanguage},
     git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
 };
 
 use super::{BaseCollector, CollectorValue};
 
+impl From<&GritQLLanguage> for TargetLanguage {
+    fn from(language: &GritQLLanguage) -> Self {
+        match language {
+            GritQLLanguage::JavaScript => TargetLanguage::from_string("js", None).unwrap(),
+            GritQLLanguage::TypeScript => TargetLanguage::from_string("ts", None).unwrap(),
+            GritQLLanguage::Rust => TargetLanguage::from_string("rs", None).unwrap(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct GritQLPatternOccurences {
     pub pattern: String,
-    pub files: Option<Vec<Glob>>,
+    pub language: GritQLLanguage,
+    // TODO: Support globs
+    // pub files: Option<Vec<Glob>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GritQLPatternOccurencesValue {}
 
 #[derive(Error, Debug)]
-pub enum GritQLPatternOccurencesError {}
+pub enum GritQLPatternOccurencesError {
+    #[error("{0}")]
+    Marzano(anyhow::Error),
+
+    #[error("{0}")]
+    Ignore(#[from] ignore::Error),
+}
 
 impl BaseCollector for GritQLPatternOccurences {
     type Error = GritQLPatternOccurencesError;
@@ -39,29 +67,37 @@ impl BaseCollector for GritQLPatternOccurences {
     #[tracing::instrument(level = "trace", skip_all)]
     fn collect(
         &self,
-        storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+        _storage: &DashMap<(CollectorConfig, CommitHash), CollectorValue>,
         repo: &mut WorktreeHandle,
-        graph: &CollectionExecutionGraph,
-        current_node_idx: NodeIndex,
+        _graph: &CollectionExecutionGraph,
+        _current_node_idx: NodeIndex,
     ) -> Result<CollectorValue, GritQLPatternOccurencesError> {
-        let pattern_body: String = "".to_string();
-        let pattern_libs: BTreeMap<String, String> = BTreeMap::new();
-        let paths: Vec<PathBuf> = vec![];
+        let language: TargetLanguage = (&self.language).into();
+        let paths: Vec<PathBuf> = vec![repo.path.clone()];
 
-        let language = TargetLanguage::from_string("js", None).unwrap();
+        dbg!("Compliting pattern");
 
-        let compiler = CompiledPatternBuilder::start_empty("`console.log($arg)`", language)?;
+        // TODO: Handle compilation outside of the collector
 
-        let compilation_result = compiler.compile(None, None, false)?;
+        let compiler = CompiledPatternBuilder::start_empty(&self.pattern, language)
+            .map_err(|err| GritQLPatternOccurencesError::Marzano(err))?;
+
+        let compilation_result = compiler
+            .compile(None, None, false)
+            .map_err(|err| GritQLPatternOccurencesError::Marzano(err))?;
 
         // TODO: Handle compilation errors
 
         let compiled = compilation_result.problem;
 
+        dbg!(&compiled);
+
         let (file_paths_tx, file_paths_rx) = mpsc::channel();
 
-        let file_walker = expand_paths(&paths, Some(&[(&compiled.language).into()]))?;
+        let file_walker = expand_paths(&paths, Some(&[(&compiled.language).into()]))
+            .map_err(|err| GritQLPatternOccurencesError::Marzano(err))?;
 
+        // TODO: Use walkdir instead of ignore
         for file in file_walker {
             let file = file?;
 
@@ -87,54 +123,68 @@ impl BaseCollector for GritQLPatternOccurences {
             file_paths_tx.send(file.path().to_path_buf()).unwrap();
         }
 
-        drop(file_paths_tx);
-
         let found_paths = file_paths_rx.iter().collect::<Vec<_>>();
+
+        let found_paths_count = found_paths.len();
 
         let (tx, rx) = mpsc::channel::<Vec<MatchResult>>();
 
-        rayon::scope(|s| {
-            s.spawn(move |_| {
-                let mut parse_errors: HashMap<String, usize> = HashMap::new();
-                for message in rx {
-                    let user_decision = emitter.handle_results(
-                        message,
-                        details,
-                        arg.dry_run,
-                        arg.format,
-                        &mut interactive,
-                        pg,
-                        Some(processed),
-                        Some(&mut parse_errors),
-                        compiled_language,
-                    );
+        let matched = AtomicI32::new(0);
+        let processed = AtomicI32::new(0);
+        // let matches: Mutex<Vec<MatchResult>> = Mutex::new(Vec::new());
+        let cache = NullCache::new();
+        let context = ExecutionContext::new();
 
-                    if !user_decision {
-                        should_continue.store(false, Ordering::SeqCst);
-                        break;
-                    }
+        let files: Vec<RichPath> = found_paths
+            .into_iter()
+            .map(|path| RichPath::new(path, None))
+            .collect();
 
-                    if !should_continue.load(Ordering::SeqCst) {
-                        break;
-                    }
-                }
-            });
+        dbg!(&files);
 
-            let task_span = tracing::info_span!("apply_file_one_streaming").entered();
-            task_span.in_scope(|| {
-                compiled.execute_paths_streaming(found_paths, context, tx, cache_ref);
+        let res = compiled.execute_paths(files.iter().collect(), &context);
 
-                loop {
-                    if processed.load(Ordering::SeqCst) >= found_count.try_into().unwrap()
-                        || !should_continue.load(Ordering::SeqCst)
-                    {
-                        break;
-                    }
-                }
-            });
-        });
+        dbg!(res);
 
-        Ok(CollectorValue::default())
+        // rayon::scope(|s| {
+        //     s.spawn(|_| {
+        //         for message in rx {
+        //             for r in message {
+        //                 if is_match(&r) {
+        //                     let count = r.get_ranges().map(|ranges| ranges.len()).unwrap_or(0);
+        //                     matched.fetch_add(count.max(1) as i32, Ordering::SeqCst);
+
+        //                     dbg!(r);
+        //                 }
+
+        //                 if let MatchResult::DoneFile(_) = r {
+        //                     processed.fetch_add(1, Ordering::SeqCst);
+        //                 }
+
+        //                 // TODO: Handle other match result types
+
+        //                 // TODO: Don't use unwrap here
+        //                 // let mut matches = matches.lock().unwrap();
+        //                 // matches.push(r);
+        //             }
+        //         }
+        //     });
+
+        //     let task_span = tracing::info_span!("apply_file_one_streaming").entered();
+        //     task_span.in_scope(|| {
+        //         compiled.execute_paths_streaming(found_paths, &context, tx, &cache);
+
+        //         loop {
+        //             if processed.load(Ordering::SeqCst) >= found_paths_count.try_into().unwrap() {
+        //                 break;
+        //             }
+        //         }
+        //     });
+        // });
+
+        let value = GritQLPatternOccurencesValue {};
+
+        Ok(value.into())
     }
 }
 

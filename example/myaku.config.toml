@@ -21,6 +21,12 @@ frequency = "per-commit"
 pattern = "\\/\\/ TODO"
 files = ["lib/src/collectors/**/*.rs"]
 
+[metrics.gritql-pattern-occurences]
+collector = "gritql-pattern-occurences"
+frequency = "per-commit"
+language = "rust"
+pattern = """`todo!("$message");`"""
+
 [metrics.total-file-count]
 collector = "total-file-count"
 frequency = "per-commit"

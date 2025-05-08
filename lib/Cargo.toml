@@ -33,9 +33,12 @@ toml = "0.8.8"
 tracing = "0.1.40"
 walkdir = "2.5.0"
 marzano-core = { git = "https://github.com/getgrit/gritql.git", package = "marzano-core" }
+marzano-util = { git = "https://github.com/getgrit/gritql.git", package = "marzano-util" }
 marzano-language = { git = "https://github.com/getgrit/gritql.git", package = "marzano-language", features = [
     "finder",
 ] }
+anyhow = "1.0.98"
+ignore = "0.4.23"
 
 [features]
 default = ["rayon"]

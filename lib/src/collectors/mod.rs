@@ -383,11 +383,11 @@ impl From<&CollectorConfig> for Collector {
                     files: files.clone(),
                 }),
             ),
-            CollectorConfig::GritQLPatternOccurences { pattern, files } => {
+            CollectorConfig::GritQLPatternOccurences { pattern, language } => {
                 Collector::Base(BaseCollectorObj::GritQLPatternOccurences(
                     gritql_pattern_occurences::GritQLPatternOccurences {
                         pattern: pattern.clone(),
-                        files: files.clone(),
+                        language: language.clone(),
                     },
                 ))
             }

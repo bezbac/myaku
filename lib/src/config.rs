@@ -25,7 +25,7 @@ pub enum CollectorConfig {
     #[serde(rename = "gritql-pattern-occurences")]
     GritQLPatternOccurences {
         pattern: String,
-        files: Option<Vec<Glob>>,
+        language: GritQLLanguage,
     },
     #[serde(rename = "changed-files")]
     ChangedFiles,
@@ -35,6 +35,14 @@ pub enum CollectorConfig {
     TotalFileCount,
     #[serde(rename = "changed-files-loc")]
     ChangedFilesLoc,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum GritQLLanguage {
+    JavaScript,
+    TypeScript,
+    Rust,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]
