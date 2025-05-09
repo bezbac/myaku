@@ -32,9 +32,9 @@ tokei = "12.1.2"
 toml = "0.8.8"
 tracing = "0.1.40"
 walkdir = "2.5.0"
-marzano-core = { git = "https://github.com/getgrit/gritql.git", package = "marzano-core" }
-marzano-util = { git = "https://github.com/getgrit/gritql.git", package = "marzano-util" }
-marzano-language = { git = "https://github.com/getgrit/gritql.git", package = "marzano-language", features = [
+marzano-core = { git = "https://github.com/getgrit/gritql.git", tag = "v0.1.0-alpha.1743007075", package = "marzano-core" }
+marzano-util = { git = "https://github.com/getgrit/gritql.git", tag = "v0.1.0-alpha.1743007075", package = "marzano-util" }
+marzano-language = { git = "https://github.com/getgrit/gritql.git", tag = "v0.1.0-alpha.1743007075", package = "marzano-language", features = [
     "finder",
 ] }
 anyhow = "1.0.98"

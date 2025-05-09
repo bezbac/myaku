@@ -1,7 +1,9 @@
+use std::sync::mpsc;
+
 use dashmap::DashMap;
-use marzano_core::pattern_compiler::CompiledPatternBuilder;
+use marzano_core::{api::MatchResult, pattern_compiler::CompiledPatternBuilder};
 use marzano_language::target_language::TargetLanguage;
-use marzano_util::{rich_path::RichFile, runtime::ExecutionContext};
+use marzano_util::{cache::NullCache, rich_path::RichFile, runtime::ExecutionContext};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -116,18 +118,24 @@ impl BaseCollector for GritQLPatternOccurences {
         let context = ExecutionContext::new();
 
         for file in &found_paths {
-            let file_name = file
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
+            // let file_name = file
+            //     .file_name()
+            //     .unwrap()
+            //     .to_str()
+            //     .unwrap_or_default()
+            //     .to_string();
 
-            let content = std::fs::read_to_string(file)?;
+            // let content = std::fs::read_to_string(file)?;
 
-            let rich_file = RichFile::new(file_name, content);
+            // let rich_file = RichFile::new(file_name, content);
 
-            let matches = compiled.execute_file(&rich_file, &context);
+            let (tx, rx) = mpsc::channel::<Vec<MatchResult>>();
+
+            let cache = NullCache::new();
+
+            compiled.execute_paths_streaming(vec![file.clone()], &context, tx, &cache);
+
+            let matches = rx.recv().unwrap();
 
             dbg!(matches);
         }
