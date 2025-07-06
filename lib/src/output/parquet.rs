@@ -203,6 +203,9 @@ pub enum RecordBatchConversionError {
 
     #[error("Serde Arrow error: {0}")]
     SerdeArrow(#[from] serde_arrow::Error),
+
+    #[error("Arrow error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
 }
 
 macro_rules! to_batch {
@@ -296,7 +299,7 @@ fn values_to_record_batch(
     let data_arrays: Vec<ArrayRef> = batch.columns().to_vec();
     let combined_arrays: Vec<ArrayRef> = [commit_arrays, data_arrays].concat();
 
-    let combined_batch = RecordBatch::try_new(Arc::new(combined_schema), combined_arrays).unwrap();
+    let combined_batch = RecordBatch::try_new(Arc::new(combined_schema), combined_arrays)?;
 
     Ok(combined_batch)
 }
