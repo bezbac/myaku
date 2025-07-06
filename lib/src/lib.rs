@@ -375,7 +375,7 @@ impl ReadyForCollection {
             let handle = self
                 .repo
                 .create_temp_worktree(&id, &self.shared.worktree_path.join(&id))
-                .unwrap();
+                .expect("Could not create worktree");
 
             handle
         }));
@@ -434,12 +434,13 @@ impl ReadyForCollection {
 
                         let output = match collector {
                             Collector::Base(collector) => {
-                                let mut temp_worktree = worktree_pool.try_pull();
-                                while temp_worktree.is_none() {
-                                    temp_worktree = worktree_pool.try_pull();
-                                }
-                                let mut temp_worktree = temp_worktree.unwrap();
-                                let worktree = temp_worktree.as_mut();
+                                let mut worktree = loop {
+                                    if let Some(worktree) = worktree_pool.try_pull() {
+                                        break worktree;
+                                    }
+                                };
+
+                                let worktree = worktree.as_mut();
 
                                 worktree.reset_hard(&task.commit_hash.0)?;
                                 collector.collect(
