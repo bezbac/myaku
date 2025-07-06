@@ -116,7 +116,7 @@ fn main() -> Result<ExitCode> {
         } else {
             (
                 EnvFilter::builder()
-                    .with_default_directive("myaku=info".parse().unwrap())
+                    .with_default_directive("myaku=info".parse().expect("Invalid filter directive"))
                     .from_env_lossy(),
                 FmtSpan::ENTER,
             )
@@ -179,7 +179,14 @@ fn main() -> Result<ExitCode> {
                 return Ok(ExitCode::from(1));
             }
 
-            let repository_name = util::get_repository_name_from_url(&config.reference.url);
+            let Some(repository_name) = util::get_repository_name_from_url(&config.reference.url)
+            else {
+                error!(
+                    "Cannot determine repository name from URL: {}",
+                    config.reference.url
+                )?;
+                return Ok(ExitCode::from(1));
+            };
 
             let reference_dir = config.repository_path.unwrap_or(PathBuf::from_str(&format!(
                 ".myaku/repositories/{repository_name}"
@@ -260,7 +267,7 @@ fn main() -> Result<ExitCode> {
                     let style = ProgressStyle::with_template(
                         " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
                     )
-                    .unwrap()
+                    .expect("Failed to create progress style")
                     .progress_chars("#>-");
                     pb.set_style(style);
                     pb.enable_steady_tick(Duration::from_millis(100));
@@ -325,7 +332,7 @@ fn main() -> Result<ExitCode> {
                 );
                 let style =
                     ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
-                        .unwrap()
+                        .expect("Failed to create progress style")
                         .progress_chars("#>-");
                 pb.set_style(style);
                 pb.enable_steady_tick(Duration::from_millis(100));
@@ -353,7 +360,8 @@ fn main() -> Result<ExitCode> {
                                 task_count,
                                 metric_count: mcount,
                             } => {
-                                let mut metric_count_lock = metric_count.lock().unwrap();
+                                let mut metric_count_lock =
+                                    metric_count.lock().expect("Failed to lock metric count");
                                 *metric_count_lock = mcount;
                                 drop(metric_count_lock);
                                 pb.set_length(task_count as u64);
@@ -363,7 +371,9 @@ fn main() -> Result<ExitCode> {
                                 commit_hash,
                             } => {
                                 debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", collector_config, commit_hash);
-                                let mut reused_task_count_lock = reused_task_count.lock().unwrap();
+                                let mut reused_task_count_lock = reused_task_count
+                                    .lock()
+                                    .expect("Failed to lock reused task count");
                                 *reused_task_count_lock += 1;
                                 drop(reused_task_count_lock);
                             }
@@ -371,18 +381,24 @@ fn main() -> Result<ExitCode> {
                                 collector_config: _,
                                 commit_hash: _,
                             } => {
-                                let mut fresh_task_count_lock = fresh_task_count.lock().unwrap();
+                                let mut fresh_task_count_lock = fresh_task_count
+                                    .lock()
+                                    .expect("Failed to lock fresh task count");
                                 *fresh_task_count_lock += 1;
                                 drop(fresh_task_count_lock);
                             }
                             myaku::ExecutionProgressCallbackState::Finished => {}
                         }
 
-                        let reused_task_count_lock = reused_task_count.lock().unwrap();
+                        let reused_task_count_lock = reused_task_count
+                            .lock()
+                            .expect("Failed to lock reused task count");
                         let reused_task_count = *reused_task_count_lock;
                         drop(reused_task_count_lock);
 
-                        let fresh_task_count_lock = fresh_task_count.lock().unwrap();
+                        let fresh_task_count_lock = fresh_task_count
+                            .lock()
+                            .expect("Failed to lock fresh task count");
                         let fresh_task_count = *fresh_task_count_lock;
                         drop(fresh_task_count_lock);
 
@@ -402,15 +418,13 @@ fn main() -> Result<ExitCode> {
                     .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
 
                 pb.finish_and_clear();
-                let metric_count = Arc::try_unwrap(metric_count).unwrap().into_inner().unwrap();
-                let reused_task_count = Arc::try_unwrap(reused_task_count)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap();
-                let fresh_task_count = Arc::try_unwrap(fresh_task_count)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap();
+                let metric_count = *metric_count.lock().expect("Failed to lock metric count");
+                let reused_task_count = *reused_task_count
+                    .lock()
+                    .expect("Failed to lock reused task count");
+                let fresh_task_count = *fresh_task_count
+                    .lock()
+                    .expect("Failed to lock fresh task count");
 
                 let duration_in_secs = pb.elapsed().as_secs_f32();
 
