@@ -159,11 +159,7 @@ pub fn build_collection_execution_graph(
     let mut graph: Graph<CollectionTask, CollectionGraphEdge> = Graph::new();
 
     let mut sorted_commits = commits.to_vec();
-    sorted_commits.sort_by(|a, b| {
-        a.time
-            .partial_cmp(&b.time)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    sorted_commits.sort_by(|a, b| a.time.cmp(&b.time));
 
     let mut created_tasks: HashMap<(CollectorConfig, CommitHash), NodeIndex> = HashMap::new();
     for metric_config in metrics.values() {
