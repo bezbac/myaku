@@ -86,7 +86,7 @@ impl Cache for FileCache {
             return Ok(None);
         }
 
-        let file = File::open(file_path).unwrap();
+        let file = File::open(file_path)?;
         let mut output = Vec::new();
         let mut reader = BufReader::new(file);
 
