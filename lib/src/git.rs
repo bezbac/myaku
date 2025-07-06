@@ -7,7 +7,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
 use execute::Execute;
 use git2::{Diff, DiffFormat, DiffOptions, Object, ObjectType, Oid, Repository, Signature, Sort};
 use rand::{distributions::Alphanumeric, Rng};
@@ -15,7 +15,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use ssh_key::{LineEnding, PrivateKey};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Author {
@@ -102,10 +102,17 @@ pub struct TempWorktreeHandle<'r> {
 
 impl<'r> Drop for TempWorktreeHandle<'r> {
     fn drop(&mut self) {
-        self.worktree
+        let res = self
+            .worktree
             .repo
-            .remove_worktree(&self.worktree.name, Some(true))
-            .unwrap();
+            .remove_worktree(&self.worktree.name, Some(true));
+
+        if res.is_err() {
+            warn!(
+                "Failed to remove temporary worktree: {}",
+                self.worktree.name
+            );
+        }
     }
 }
 
@@ -126,9 +133,11 @@ pub struct RepositoryHandle {
     pub path: PathBuf,
 }
 
-impl From<&RepositoryHandle> for Repository {
-    fn from(value: &RepositoryHandle) -> Self {
-        Repository::open(&value.path).unwrap()
+impl TryFrom<&RepositoryHandle> for Repository {
+    type Error = git2::Error;
+
+    fn try_from(value: &RepositoryHandle) -> Result<Self, Self::Error> {
+        Repository::open(&value.path)
     }
 }
 
@@ -142,6 +151,12 @@ pub enum GitError {
 
     #[error("Could not determine mainline branch")]
     FailedToDetermineMainlineBranch,
+
+    #[error("Failed to create git object")]
+    FailedToGetGitObject,
+
+    #[error("Failed to convert git object time: {time:?}")]
+    FailedToConvertGitObjectTime { time: git2::Time },
 
     #[error("Unexpected tag name format: {tag_name}")]
     UnexpectedTagNameFormat { tag_name: String },
@@ -180,7 +195,7 @@ impl RepositoryHandle {
     }
 
     pub fn remote_url(&self) -> Result<String, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
         let remote = git2_repo.find_remote("origin")?;
         let url = remote.url().ok_or(GitError::FailedToDetermineRemoteURL)?;
@@ -189,7 +204,7 @@ impl RepositoryHandle {
     }
 
     pub fn find_main_branch(&self) -> Result<String, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
         let mut found = Option::None;
         for attempt in &["master", "main", "dev", "development", "develop"] {
@@ -216,9 +231,9 @@ impl RepositoryHandle {
     }
 
     pub fn get_all_commits(&self) -> Result<Vec<CommitInfo>, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
-        let mut revwalk = git2_repo.revwalk().unwrap();
+        let mut revwalk = git2_repo.revwalk()?;
 
         revwalk.set_sorting(Sort::NONE)?;
         revwalk.push_head()?;
@@ -228,10 +243,14 @@ impl RepositoryHandle {
             let oid = id?;
             let commit = git2_repo.find_commit(oid)?;
 
-            let time = chrono::FixedOffset::east_opt(commit.time().offset_minutes() * 60)
-                .unwrap()
-                .timestamp_opt(commit.time().seconds(), 0)
-                .unwrap();
+            let Some(LocalResult::Single(time)) =
+                chrono::FixedOffset::east_opt(commit.time().offset_minutes() * 60)
+                    .map(|time| time.timestamp_opt(commit.time().seconds(), 0))
+            else {
+                return Err(GitError::FailedToConvertGitObjectTime {
+                    time: commit.time(),
+                });
+            };
 
             commits.push(CommitInfo {
                 id: commit.id().to_string().into(),
@@ -246,7 +265,7 @@ impl RepositoryHandle {
     }
 
     pub fn get_all_commit_tags(&self) -> Result<Vec<CommitTagInfo>, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
         let mut tag_ids_and_names: Vec<(Oid, Vec<u8>)> = Vec::new();
 
@@ -310,7 +329,7 @@ impl RepositoryHandle {
         worktree_name: &str,
         worktree_path: &Path,
     ) -> Result<WorktreeHandle, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
         git2_repo.worktree(worktree_name, worktree_path, None)?;
 
@@ -365,15 +384,17 @@ impl RepositoryHandle {
     }
 }
 
-impl<'r> From<&WorktreeHandle<'r>> for Repository {
-    fn from(value: &WorktreeHandle) -> Self {
-        Repository::open(&value.path).unwrap()
+impl<'r> TryFrom<&WorktreeHandle<'r>> for Repository {
+    type Error = git2::Error;
+
+    fn try_from(value: &WorktreeHandle<'r>) -> Result<Self, Self::Error> {
+        Repository::open(&value.path)
     }
 }
 
 impl<'r> WorktreeHandle<'r> {
     pub fn reset_hard(&self, revstring: &str) -> Result<(), GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
 
         let (object, _) = git2_repo.revparse_ext(revstring)?;
         git2_repo.checkout_tree(&object, None)?;
@@ -383,14 +404,14 @@ impl<'r> WorktreeHandle<'r> {
     }
 
     pub fn get_current_total_diff_stat(&self) -> Result<(usize, usize, usize), GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
         let diff = get_current_diff_to_parent(&git2_repo)?;
         let stats = diff.stats()?;
         Ok((stats.files_changed(), stats.insertions(), stats.deletions()))
     }
 
     pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
         let diff = get_current_diff_to_parent(&git2_repo)?;
 
         let mut diff_lines = Vec::new();
@@ -412,7 +433,7 @@ impl<'r> WorktreeHandle<'r> {
     }
 
     pub fn list_files(&self) -> Result<Vec<String>, GitError> {
-        let git2_repo: Repository = self.into();
+        let git2_repo: Repository = self.try_into()?;
         let mut files = Vec::new();
 
         let tree = git2_repo.find_tree(git2_repo.head()?.peel_to_tree()?.id())?;
@@ -432,15 +453,17 @@ fn get_current_diff_to_parent(repo: &Repository) -> Result<Diff<'_>, GitError> {
     // This object is the empty tree. See https://stackoverflow.com/a/40884093 for more details.
     let empty_tree = repo.find_tree(Oid::from_str("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?)?;
 
-    let t1 =
-        tree_to_treeish(repo, Some(&"HEAD^".to_string())).unwrap_or(Some(empty_tree.into_object()));
-    let t2 = tree_to_treeish(repo, Some(&"HEAD".to_string()))?;
+    let Some(t1) =
+        tree_to_treeish(repo, Some(&"HEAD^".to_string())).unwrap_or(Some(empty_tree.into_object()))
+    else {
+        return Err(GitError::FailedToGetGitObject);
+    };
 
-    let diff = repo.diff_tree_to_tree(
-        t1.unwrap().as_tree(),
-        t2.unwrap().as_tree(),
-        Some(&mut DiffOptions::new()),
-    )?;
+    let Some(t2) = tree_to_treeish(repo, Some(&"HEAD".to_string()))? else {
+        return Err(GitError::FailedToGetGitObject);
+    };
+
+    let diff = repo.diff_tree_to_tree(t1.as_tree(), t2.as_tree(), Some(&mut DiffOptions::new()))?;
 
     Ok(diff)
 }
@@ -487,10 +510,26 @@ impl CloneProgress {
             let (finished, total) = {
                 let mut tmp = progress.as_str().split('(');
                 tmp.next();
-                let tmp = tmp.next().unwrap().replace(')', "");
+
+                let Some(tmp) = tmp.next() else {
+                    return Err(GitCloneError::FailedToMatchProgress(line.to_string()));
+                };
+
+                let tmp = tmp.replace(')', "");
                 let mut parts = tmp.split('/');
-                let finished = parts.next().unwrap().parse::<usize>()?;
-                let total = parts.next().unwrap().parse::<usize>()?;
+
+                let Some(finished) = parts.next() else {
+                    return Err(GitCloneError::FailedToMatchProgress(line.to_string()));
+                };
+
+                let finished = finished.parse::<usize>()?;
+
+                let Some(total) = parts.next() else {
+                    return Err(GitCloneError::FailedToMatchProgress(line.to_string()));
+                };
+
+                let total = total.trim().parse::<usize>()?;
+
                 (finished, total)
             };
 
@@ -670,16 +709,23 @@ pub fn clone_repository(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let stdout = child.stderr.take().unwrap();
+    let Some(stdout) = child.stderr.take() else {
+        return Err(GitCloneError::FailedToProcessCommandOutput(
+            "No stdout available from git clone command".to_string(),
+        ));
+    };
 
     let mut lines = vec![];
     let reader: BufReaderWithDelimitedBy<_> = BufReader::new(stdout).into();
 
-    reader.delimited_by(&['\n', '\r']).for_each(|line| {
-        let line = line.unwrap();
+    for line in reader.delimited_by(&['\n', '\r']) {
+        let Ok(line) = line else {
+            warn!("Failed to read line from git clone output: {:?}", line);
+            continue;
+        };
 
         if line.trim().is_empty() {
-            return;
+            continue;
         }
 
         let progress = CloneProgress::try_from(&line);
@@ -688,7 +734,7 @@ pub fn clone_repository(
         }
 
         lines.push(line);
-    });
+    }
 
     let exit = child.wait()?;
 
