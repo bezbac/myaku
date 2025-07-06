@@ -46,13 +46,10 @@ pub fn find_preceding_node<
         find_incoming_edges(graph, current_node_idx, edge_predicate);
 
     for edge_idx in incoming_edges_matching_predicate {
-        let endpoints = graph.graph.edge_endpoints(edge_idx);
-
-        if endpoints.is_none() {
+        let Some((source_node_idx, _)) = graph.graph.edge_endpoints(edge_idx) else {
             continue;
-        }
+        };
 
-        let source_node_idx = endpoints.unwrap().0;
         let source_node = &graph.graph[source_node_idx];
 
         if node_predicate(source_node) {
