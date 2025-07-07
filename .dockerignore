@@ -1,0 +1,14 @@
+*
+!.cargo/
+!Cargo.lock
+!Cargo.toml
+!cli/
+cli/*
+!cli/src
+!cli/Cargo.lock
+!cli/Cargo.toml
+!lib/
+lib/*
+!lib/src
+!lib/Cargo.lock
+!lib/Cargo.toml
