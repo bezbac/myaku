@@ -2,7 +2,16 @@ import * as pl from "npm:nodejs-polars@0.18.0";
 import * as Plot from "npm:@observablehq/plot";
 import { JSDOM } from "npm:jsdom";
 
-const df = pl.readParquet("./.myaku/output/bezbac/myaku/commits.parquet");
+const commits = pl.readParquet("./.myaku/output/bezbac/myaku/commits.parquet");
+const todos = pl.readParquet(
+  "./.myaku/output/bezbac/myaku/metrics/pattern-occurences/data.parquet"
+);
+
+// Join commits with todos on the commit hash
+let df = commits.join(todos, {
+  leftOn: "id",
+  rightOn: "commit",
+});
 
 const dateValues = [...df.getColumn("time")].map((time) => {
   const date = new Date(time * 1000);
@@ -11,43 +20,52 @@ const dateValues = [...df.getColumn("time")].map((time) => {
 
 const dateColumn = pl.Series("date", dateValues);
 
-const records = df
-  .withColumn(dateColumn)
-  .groupBy("date")
-  .agg(pl.col("date").count().alias("count"))
-  .sort("date")
-  .toRecords();
+df = df.withColumn(dateColumn);
+df = df.drop("time");
 
-const firstDate = Math.min(
-  ...records.map((r) => new Date(r.date as string).getTime())
-);
-const lastDate = Math.max(
-  ...records.map((r) => new Date(r.date as string).getTime())
-);
+const matchesValues = JSON.parse(
+  (df.getColumn("matches") as pl.Series).toJSON()
+).values;
 
-const days = Math.ceil((lastDate - firstDate) / (1000 * 60 * 60 * 24));
+df = df.drop("matches");
 
-const normalized = Array.from({ length: days }, (_, i) => {
-  const date = new Date(firstDate + i * 1000 * 60 * 60 * 24)
-    .toISOString()
-    .split("T")[0];
-
-  const record = records.find((r) => r.date === date);
-
-  return {
-    date: new Date(date),
-    count: record ? record.count : 0,
-  };
+const countValues = matchesValues.map((data: any) => {
+  return data.length;
 });
+
+const countColumn = pl.Series("count", countValues);
+
+df = df.withColumn(countColumn);
+
+const records = df.sort("date").toRecords();
+
+const normalized = [
+  ...records,
+  // Append the current date with the last count
+  {
+    ...records[records.length - 1],
+    date: new Date().toISOString().split("T")[0],
+  },
+];
 
 const plot = Plot.plot({
   document: new JSDOM("").window.document,
   width: 900,
-  marginLeft: 50,
+  x: {
+    type: "time",
+    label: undefined,
+  },
+  y: {
+    type: "linear",
+    label: "Number of TODO comments",
+    grid: true,
+  },
   marks: [
-    Plot.barY(normalized, {
+    Plot.line(normalized, {
       x: "date",
       y: "count",
+      curve: "step-after",
+      stroke: "steelblue",
     }),
   ],
 });
