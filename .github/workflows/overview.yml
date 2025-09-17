@@ -20,9 +20,16 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Update config
+        run: |
+          # Add `repository_path` to config
+          ROOT_PATH=$(pwd)
+          echo "" >> ./example/myaku.config.toml
+          echo "repository_path = \"$ROOT_PATH\"" >> ./example/myaku.config.toml
+
       - name: Extract data
         run: |
-          cargo run -- collect --config ./example/myaku.config.toml
+          cargo run -- collect --config ./example/myaku.config.toml --offline
 
       - name: Generate todo chart
         id: generate-todo-chart
