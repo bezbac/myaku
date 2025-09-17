@@ -53,11 +53,11 @@ const plot = Plot.plot({
   width: 900,
   x: {
     type: "time",
-    label: undefined,
+    label: null,
   },
   y: {
     type: "linear",
-    label: "Number of TODO comments",
+    label: null,
     grid: true,
     tickFormat: (d) => (d % 1 === 0 ? d.toFixed(0) : ""), // Ensure no ticks for decimals
   },
