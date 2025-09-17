@@ -1,0 +1,42 @@
+name: "Regenerate overview issue"
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.82.0
+
+      - name: Install deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Extract data
+        run: |
+          cargo run -- collect --config ./example/myaku.config.toml
+
+      - name: Generate todo chart
+        id: generate-todo-chart
+        run: |
+          OUTPUT=$(deno run ./github/overview/script.ts)
+          OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
+          echo "::set-output name=body::$OUTPUT"
+
+      - name: Update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: 3427398674
+          body: |
+            ## Overview
+
+            ## Total TODO comments over time
+            <img src="data:image/svg+xml;base64,${{ steps.generate-todo-chart.outputs.body }}" alt="TODO comments over time" />
