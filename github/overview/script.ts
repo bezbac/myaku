@@ -59,6 +59,7 @@ const plot = Plot.plot({
     type: "linear",
     label: "Number of TODO comments",
     grid: true,
+    tickFormat: (d) => (d % 1 === 0 ? d.toFixed(0) : ""), // Ensure no ticks for decimals
   },
   marks: [
     Plot.line(normalized, {
