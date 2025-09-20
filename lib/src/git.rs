@@ -143,8 +143,8 @@ impl TryFrom<&RepositoryHandle> for Repository {
 
 #[derive(Error, Debug)]
 pub enum GitError {
-    #[error(".git directory does not exist")]
-    NoGitDirectory,
+    #[error(".git directory does not exist in path {0}")]
+    NoGitDirectory(PathBuf),
 
     #[error("Could not determine remote URL")]
     FailedToDetermineRemoteURL,
@@ -182,7 +182,7 @@ impl RepositoryHandle {
             });
         }
 
-        Err(GitError::NoGitDirectory)
+        Err(GitError::NoGitDirectory(path.to_path_buf()))
     }
 
     pub fn fetch(&self) -> Result<(), GitError> {
