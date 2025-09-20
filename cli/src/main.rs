@@ -256,8 +256,6 @@ fn main() -> Result<ExitCode> {
                 }
                 myaku::CollectionProcess::ReadyForClone(process) => {
                     if *offline {
-                        info!("Repository already exists in reference directory")?;
-
                         return Err(anyhow::anyhow!(
                             "Cannot clone repository. Disabled due to --offline argument"
                         ));
