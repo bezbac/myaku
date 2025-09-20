@@ -61,6 +61,9 @@ enum Commands {
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         offline: bool,
 
+        #[arg(short, long, action = clap::ArgAction::SetTrue, requires = "offline")]
+        ignore_mismatched_repo_url: bool,
+
         #[arg(long, default_value_t, value_enum)]
         output: OutputType,
     },
@@ -166,6 +169,7 @@ fn main() -> Result<ExitCode> {
             no_cache: disable_cache,
             output: output_type,
             offline,
+            ignore_mismatched_repo_url,
         }) => {
             let config = config::Config::from_file(config_path)?;
 
@@ -230,6 +234,7 @@ fn main() -> Result<ExitCode> {
                 disable_cache: *disable_cache,
 
                 force_latest_commit: true,
+                ignore_mismatched_repo_url: *ignore_mismatched_repo_url,
             })
             .initialize()?;
 
