@@ -136,6 +136,7 @@ pub enum CollectionProcess {
     PostCollection(PostCollection),
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct SharedCollectionProcessState {
     pub reference: GitRepository,
     pub repository_path: PathBuf,
@@ -156,6 +157,9 @@ pub struct SharedCollectionProcessState {
 
     /// Do not check if the remote URL of the repository matches the one in the config file
     pub ignore_mismatched_repo_url: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    pub offline: bool,
 }
 
 #[derive(Debug)]
@@ -201,17 +205,23 @@ impl Initial {
                     return Err(CollectionProcessError::MismatchedRepositoryUrl);
                 }
 
+                if self.shared.offline {
+                    // Skip fetch and clone if offline
+                    return Ok(CollectionProcess::IdleWithoutCommits(IdleWithoutCommits {
+                        shared: self.shared,
+                        repo,
+                    }));
+                }
+
                 Ok(CollectionProcess::ReadyForFetch(ReadyForFetch {
                     repo,
                     shared: self.shared,
                 }))
             }
             Err(e) => {
-                debug!(
-                    "Could not open repository at path {}. Will attempt to clone.",
-                    reference_dir.display()
-                );
-                debug!("Error: {}", e);
+                if self.shared.offline {
+                    return Err(CollectionProcessError::Git(e));
+                }
 
                 Ok(CollectionProcess::ReadyForClone(ReadyForClone {
                     shared: self.shared,
@@ -229,15 +239,6 @@ impl Initial {
 impl ReadyForFetch {
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn fetch(self) -> Result<IdleWithoutCommits, CollectionProcessError> {
-        self.repo.fetch()?;
-        Ok(IdleWithoutCommits {
-            shared: self.shared,
-            repo: self.repo,
-        })
-    }
-
-    #[tracing::instrument(level = "trace", skip(self))]
-    pub fn skip(self) -> Result<IdleWithoutCommits, CollectionProcessError> {
         Ok(IdleWithoutCommits {
             shared: self.shared,
             repo: self.repo,
