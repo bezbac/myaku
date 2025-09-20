@@ -23,7 +23,6 @@ jobs:
       - name: Create config file config
         run: |
           ROOT_PATH=$(pwd)
-          mkdir ~/.config
           cp ./example/myaku.config.toml ~/.config/myaku.config.toml
           sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
 
