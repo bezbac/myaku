@@ -153,6 +153,9 @@ pub struct SharedCollectionProcessState {
 
     /// The `force_latest_commit` flag will be passed to the `build_collection_execution_graph` function
     pub force_latest_commit: bool,
+
+    /// Do not check if the remote URL of the repository matches the one in the config file
+    pub ignore_mismatched_repo_url: bool,
 }
 
 #[derive(Debug)]
@@ -191,7 +194,10 @@ impl Initial {
         return match RepositoryHandle::open(reference_dir) {
             Result::Ok(repo) => {
                 let remote_url = repo.remote_url()?;
-                if remote_url != self.shared.reference.url {
+
+                if remote_url != self.shared.reference.url
+                    && !self.shared.ignore_mismatched_repo_url
+                {
                     return Err(CollectionProcessError::MismatchedRepositoryUrl);
                 }
 
