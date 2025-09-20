@@ -206,8 +206,13 @@ impl Initial {
                     shared: self.shared,
                 }))
             }
-            Err(_) => {
-                // TODO: Check specific error
+            Err(e) => {
+                debug!(
+                    "Could not open repository at path {}. Will attempt to clone.",
+                    reference_dir.display()
+                );
+                debug!("Error: {}", e);
+
                 Ok(CollectionProcess::ReadyForClone(ReadyForClone {
                     shared: self.shared,
                 }))
