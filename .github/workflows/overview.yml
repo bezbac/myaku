@@ -24,8 +24,7 @@ jobs:
         run: |
           # Add `repository_path` to config
           ROOT_PATH=$(pwd)
-          echo "" >> ./example/myaku.config.toml
-          echo "repository_path = \"$ROOT_PATH\"" >> ./example/myaku.config.toml
+          sed -i '1irepository_path = "'"$ROOT_PATH"'"' ./example/myaku.config.toml
 
       - name: Extract data
         run: |
