@@ -234,27 +234,35 @@ fn main() -> Result<ExitCode> {
                 disable_cache: *disable_cache,
 
                 force_latest_commit: true,
+                offline: *offline,
                 ignore_mismatched_repo_url: *ignore_mismatched_repo_url,
             })
             .initialize()?;
 
             let process = match process {
+                myaku::CollectionProcess::IdleWithoutCommits(process) => {
+                    info!("Repository already exists in reference directory")?;
+                    info!("Skipped refresh due to --offline argument")?;
+                    process
+                }
                 myaku::CollectionProcess::ReadyForFetch(process) => {
                     info!("Repository already exists in reference directory")?;
 
                     if *offline {
-                        let process = process.skip()?;
-                        info!("Skipped refresh due to --offline argument")?;
-                        process
-                    } else {
-                        info!("Refreshing repository")?;
-                        let process = process.fetch()?;
-                        term.clear_last_lines(1)?;
-                        info!("Refreshed repository successfully")?;
-                        process
+                        return Err(anyhow::anyhow!(
+                            "Cannot fetch repository. Disabled due to --offline argument"
+                        ));
                     }
+
+                    info!("Refreshing repository")?;
+                    let process = process.fetch()?;
+                    term.clear_last_lines(1)?;
+                    info!("Refreshed repository successfully")?;
+                    process
                 }
                 myaku::CollectionProcess::ReadyForClone(process) => {
+                    info!("Repository does not exist yet in reference directory")?;
+
                     if *offline {
                         return Err(anyhow::anyhow!(
                             "Cannot clone repository. Disabled due to --offline argument"
