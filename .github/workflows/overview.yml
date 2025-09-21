@@ -12,38 +12,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      # - uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ~/.cargo/bin/
-      #       ~/.cargo/registry/index/
-      #       ~/.cargo/registry/cache/
-      #       ~/.cargo/git/db/
-      #       target/
-      #     key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # - name: Install rust toolchain
-      #   uses: dtolnay/rust-toolchain@1.82.0
-
-      # - name: Install deno
-      #   uses: denoland/setup-deno@v2
-      #   with:
-      #     deno-version: v2.x
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.82.0
 
       - name: Install deno
         run: |
           curl -fsSL https://deno.land/install.sh | sh
-          echo "/home/runner/.deno/bin/" >> $GITHUB_PATH
+          echo "~/.deno/bin/" >> $GITHUB_PATH
 
-      # - name: Create config file config
-      #   run: |
-      #     ROOT_PATH=$(pwd)
-      #     cp ./example/myaku.config.toml ~/.config/myaku.config.toml
-      #     sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
+      - name: Create config file config
+        run: |
+          ROOT_PATH=$(pwd)
+          cp ./example/myaku.config.toml ~/.config/myaku.config.toml
+          sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
 
-      # - name: Extract data
-      #   run: |
-      #     cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
+      - name: Extract data
+        run: |
+          cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
 
       - name: Generate todo chart
         id: generate-todo-chart
