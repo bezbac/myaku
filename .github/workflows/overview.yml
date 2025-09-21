@@ -33,6 +33,8 @@ jobs:
       - name: Install deno
         run: |
           curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          deno --version
 
       # - name: Create config file config
       #   run: |
