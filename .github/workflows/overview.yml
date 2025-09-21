@@ -34,7 +34,6 @@ jobs:
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "/home/runner/.deno/bin/" >> $GITHUB_PATH
-          deno --version
 
       # - name: Create config file config
       #   run: |
