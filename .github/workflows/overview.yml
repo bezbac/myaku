@@ -43,6 +43,9 @@ jobs:
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
+          pwd
+          ls -la
+          deno --version
           OUTPUT=$(deno run --allow-all "./.github/resources/script.ts")
           OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
           echo "::set-output name=body::$OUTPUT"
