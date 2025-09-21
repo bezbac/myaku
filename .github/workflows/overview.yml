@@ -31,9 +31,9 @@ jobs:
           cp ./example/myaku.config.toml ~/.config/myaku.config.toml
           sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
 
-      # - name: Extract data
-      #   run: |
-      #     cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
+      - name: Extract data
+        run: |
+          cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
 
       - name: Install deno
         run: |
@@ -43,6 +43,7 @@ jobs:
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
+          git status --porcelain
           pwd
           ls -la
           deno --version
