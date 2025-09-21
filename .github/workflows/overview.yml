@@ -29,7 +29,10 @@ jobs:
         run: |
           ROOT_PATH=$(pwd)
           cp ./example/myaku.config.toml ~/.config/myaku.config.toml
+          sed -i '1ioutput_path = "./myaku/output"' ~/.config/myaku.config.toml
+          sed -i '1icache_path = "./myaku/cache"' ~/.config/myaku.config.toml
           sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
+          cat ~/.config/myaku.config.toml
 
       - name: Extract data
         run: |
@@ -43,10 +46,6 @@ jobs:
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
-          git status --porcelain
-          pwd
-          ls -la
-          deno --version
           OUTPUT=$(deno run --allow-all "./.github/resources/script.ts")
           OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
           echo "::set-output name=body::$OUTPUT"
