@@ -5,7 +5,7 @@ on:
   push:
 
 jobs:
-  main:
+  extract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,10 +38,26 @@ jobs:
         run: |
           cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: myaku-data
+          path: ./output/
+
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Install deno
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "~/.deno/bin/" >> $GITHUB_PATH
+
+      - name: Download myaku data
+        uses: actions/download-artifact@v4
+        with:
+          name: myaku-data
+          path: ./.myaku/output/
 
       - name: Generate todo chart
         id: generate-todo-chart
