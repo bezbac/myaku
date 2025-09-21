@@ -7,6 +7,8 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,12 +41,14 @@ jobs:
           cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
 
       - uses: actions/upload-artifact@v4
+        id: upload-artifact
         with:
           name: myaku-data
           path: ./output/
 
   report:
     runs-on: ubuntu-latest
+    needs: extract
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +60,7 @@ jobs:
       - name: Download myaku data
         uses: actions/download-artifact@v4
         with:
-          name: myaku-data
+          artifact-ids: ${{ needs.extract.outputs.artifact-id }}
           path: ./.myaku/output/
 
       - name: Generate todo chart
