@@ -33,7 +33,7 @@ jobs:
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
-          OUTPUT=$(deno run --allow-read --allow-ffi --allow-env "./github/overview/script.ts")
+          OUTPUT=$(deno run --allow-read --allow-ffi --allow-env "./.github/resources/script.ts")
           OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
           echo "::set-output name=body::$OUTPUT"
 
