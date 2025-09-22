@@ -63,6 +63,11 @@ jobs:
           artifact-ids: ${{ needs.extract.outputs.artifact-id }}
           path: ./.myaku/output/bezbac/myaku
 
+      - name: List files
+        run: |
+          cd ./.myaku/output/bezbac/myaku
+          ls -la
+
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
