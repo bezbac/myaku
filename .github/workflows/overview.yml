@@ -65,6 +65,7 @@ jobs:
 
       - name: Move myaku data
         run: |
+          mkdir -p ./.myaku/output/bezbac
           mv ./.myaku/output/download/myaku-data ./.myaku/output/bezbac/myaku
 
       - name: List files
