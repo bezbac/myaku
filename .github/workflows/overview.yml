@@ -61,12 +61,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ needs.extract.outputs.artifact-id }}
-          path: ./.myaku/output/bezbac/myaku
+          path: ./.myaku/output/download
+
+      - name: Move myaku data
+        run: |
+          mv ./.myaku/output/download ./.myaku/output/bezbac/myaku
 
       - name: List files
         run: |
-          cd ./.myaku/output/bezbac/myaku
-          ls -la
+          ls -la ./.myaku/output/bezbac/myaku
 
       - name: Generate todo chart
         id: generate-todo-chart
