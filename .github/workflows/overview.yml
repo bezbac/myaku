@@ -65,7 +65,7 @@ jobs:
 
       - name: Move myaku data
         run: |
-          mv ./.myaku/output/download ./.myaku/output/bezbac/myaku
+          mv ./.myaku/output/download/myaku-data ./.myaku/output/bezbac/myaku
 
       - name: List files
         run: |
