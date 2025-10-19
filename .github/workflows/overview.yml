@@ -79,12 +79,34 @@ jobs:
           OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
           echo "::set-output name=body::$OUTPUT"
 
-      - name: Update comment
+      - name: Find Comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: 1
+          comment-author: "github-actions[bot]"
+          body-includes: Overview
+
+      - name: Create comment
+        if: steps.fc.outputs.comment-id == ''
         uses: peter-evans/create-or-update-comment@v4
         with:
-          comment-id: 3427398674
+          issue-number: 1
           body: |
-            ## Overview
+            # Overview
 
             ## Total TODO comments over time
             <img src="data:image/svg+xml;base64,${{ steps.generate-todo-chart.outputs.body }}" alt="TODO comments over time" />
+
+      - name: Update comment
+        if: steps.fc.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            # Overview
+
+            ## Total TODO comments over time
+            <img src="data:image/svg+xml;base64,${{ steps.generate-todo-chart.outputs.body }}" alt="TODO comments over time" />
+
