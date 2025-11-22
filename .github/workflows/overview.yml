@@ -5,7 +5,7 @@ on:
   push:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -80,8 +80,17 @@ jobs:
         id: generate-todo-chart
         run: |
           OUTPUT=$(deno run --allow-all "./.github/resources/script.ts")
-          OUTPUT=$(echo "$OUTPUT" | base64 -w 0)
           echo "::set-output name=body::$OUTPUT"
+
+      - name: Create chart file and push to branch
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git checkout -B resources
+          echo "${{ steps.generate-todo-chart.outputs.body }}" > ./todo_chart.svg
+          git add ./todo_chart.svg
+          git commit -m "Update todo_chart.svg"
+          git push origin resources
 
       - name: Find Comment
         uses: peter-evans/find-comment@v3
@@ -100,7 +109,7 @@ jobs:
             # Overview
 
             ## Total TODO comments over time
-            <img src="data:image/svg+xml;base64,${{ steps.generate-todo-chart.outputs.body }}" alt="TODO comments over time" />
+            ![TODO comments over time](https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/resources/todos.svg)
 
       - name: Update comment
         if: steps.fc.outputs.comment-id != ''
@@ -112,5 +121,4 @@ jobs:
             # Overview
 
             ## Total TODO comments over time
-            <img src="data:image/svg+xml;base64,${{ steps.generate-todo-chart.outputs.body }}" alt="TODO comments over time" />
-
+            ![TODO comments over time](https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/resources/todos.svg)
