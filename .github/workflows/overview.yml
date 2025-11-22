@@ -1,0 +1,134 @@
+name: "Regenerate overview issue"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.82.0
+
+      - name: Create config file config
+        run: |
+          ROOT_PATH=$(pwd)
+          cp ./example/myaku.config.toml ~/.config/myaku.config.toml
+          sed -i '1ioutput_path = "./output"' ~/.config/myaku.config.toml
+          sed -i '1icache_path = "./cache"' ~/.config/myaku.config.toml
+          sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
+          cat ~/.config/myaku.config.toml
+
+      - name: Extract data
+        run: |
+          cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
+
+      - uses: actions/upload-artifact@v4
+        id: upload-artifact
+        with:
+          name: myaku-data
+          path: ./output/
+
+  report:
+    runs-on: ubuntu-latest
+    needs: extract
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deno
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "~/.deno/bin/" >> $GITHUB_PATH
+
+      - name: Download myaku data
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.extract.outputs.artifact-id }}
+          path: ./.myaku/output/download
+
+      - name: Move myaku data
+        run: |
+          mkdir -p ./.myaku/output/bezbac
+          mv ./.myaku/output/download/myaku-data ./.myaku/output/bezbac/myaku
+
+      - name: List files
+        run: |
+          ls -la ./.myaku/output/bezbac/myaku
+
+      - name: Setup git user
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Fetch all branches
+        run: |
+          git fetch --all
+
+      - name: Switch to resources branch
+        run: |
+          git switch -c resources origin/resources
+
+      - name: Generate todo chart
+        id: generate-todo-chart
+        run: |
+          deno run --allow-all "./.github/resources/script.ts" > todo_chart.svg
+
+      - name: Push changes
+        run: |
+          git add ./todo_chart.svg
+          git commit -m "Update todo_chart.svg"
+          git push origin resources
+
+      - name: Find Comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: 1
+          comment-author: "github-actions[bot]"
+          body-includes: Overview
+
+      - name: Create comment
+        if: steps.fc.outputs.comment-id == ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: 1
+          body: |
+            # Overview
+
+            ## Total TODO comments over time
+            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/todo_chart.svg?raw=true)
+
+      - name: Update comment
+        if: steps.fc.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            # Overview
+
+            ## Total TODO comments over time
+            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/todo_chart.svg?raw=true)

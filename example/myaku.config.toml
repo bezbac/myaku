@@ -15,8 +15,8 @@ frequency = "per-commit"
 collector = "total-cargo-deps"
 frequency = "per-commit"
 
-[metrics.total-pattern-occurences]
-collector = "total-pattern-occurences"
+[metrics.pattern-occurences]
+collector = "pattern-occurences"
 frequency = "per-commit"
 pattern = "\\/\\/ TODO"
 files = ["lib/src/collectors/**/*.rs"]
