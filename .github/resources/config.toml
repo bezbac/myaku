@@ -3,7 +3,7 @@ url = "git@github.com:bezbac/myaku.git"
 
 [metrics]
 
-[metrics.pattern-occurences]
+[metrics.todos]
 collector = "pattern-occurences"
 frequency = "per-commit"
 pattern = "\\/\\/ TODO"
