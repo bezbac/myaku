@@ -91,15 +91,23 @@ jobs:
         run: |
           git switch -c resources origin/resources
 
+      - name: Get latest version of the script
+        run: |
+          git checkout ${{ github.sha }} -- ./.github/resources/script.ts
+
       - name: Generate todo chart
         id: generate-todo-chart
         run: |
           deno run --allow-all "./.github/resources/script.ts" > todo_chart.svg
 
+      - name: Show generated svg contents
+        run: |
+          cat todo_chart.svg
+
       - name: Push changes
         run: |
           git add ./todo_chart.svg
-          git commit -m "Update todo_chart.svg"
+          git commit --allow-empty -m "Update todo_chart.svg"
           git push origin resources
 
       - name: Find Comment
