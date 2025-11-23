@@ -1,0 +1,9 @@
+[reference]
+url = "git@github.com:bezbac/myaku.git"
+
+[metrics]
+
+[metrics.pattern-occurences]
+collector = "pattern-occurences"
+frequency = "per-commit"
+pattern = "\\/\\/ TODO"

@@ -4,7 +4,7 @@ import { JSDOM } from "npm:jsdom";
 
 const commits = pl.readParquet("./.myaku/output/bezbac/myaku/commits.parquet");
 const todos = pl.readParquet(
-  "./.myaku/output/bezbac/myaku/metrics/pattern-occurences/data.parquet"
+  "./.myaku/output/bezbac/myaku/metrics/todos/data.parquet"
 );
 
 // Join commits with todos on the commit hash

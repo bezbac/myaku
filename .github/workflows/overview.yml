@@ -36,7 +36,7 @@ jobs:
       - name: Create config file config
         run: |
           ROOT_PATH=$(pwd)
-          cp ./example/myaku.config.toml ~/.config/myaku.config.toml
+          cp ./.github/resources/config.toml ~/.config/myaku.config.toml
           sed -i '1ioutput_path = "./output"' ~/.config/myaku.config.toml
           sed -i '1icache_path = "./cache"' ~/.config/myaku.config.toml
           sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
