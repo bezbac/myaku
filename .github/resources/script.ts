@@ -1,10 +1,15 @@
 import * as pl from "npm:nodejs-polars@0.18.0";
 import * as Plot from "npm:@observablehq/plot";
+import * as path from "https://deno.land/std@0.203.0/path/mod.ts";
 import { JSDOM } from "npm:jsdom";
 
-const commits = pl.readParquet("./.myaku/output/bezbac/myaku/commits.parquet");
+const cwd = Deno.cwd();
+
+const commits = pl.readParquet(
+  path.join(cwd, ".myaku/output/bezbac/myaku/commits.parquet")
+);
 const todos = pl.readParquet(
-  "./.myaku/output/bezbac/myaku/metrics/pattern-occurences/data.parquet"
+  path.join(cwd, ".myaku/output/bezbac/myaku/metrics/todos/data.parquet")
 );
 
 // Join commits with todos on the commit hash
@@ -50,6 +55,7 @@ const normalized = [
 
 const plot = Plot.plot({
   document: new JSDOM("").window.document,
+  className: "plot",
   width: 900,
   x: {
     type: "time",
@@ -81,5 +87,18 @@ plot.setAttributeNS(
   "xmlns:xlink",
   "http://www.w3.org/1999/xlink"
 );
+
+const style = plot.ownerDocument.createElement("style");
+style.textContent = `
+.plot {
+  color: black;
+}
+
+@media (prefers-color-scheme: dark) {
+  .plot { color: white; }
+}
+`;
+
+plot.prepend(style);
 
 console.log(plot.outerHTML);
