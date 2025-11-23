@@ -256,7 +256,7 @@ impl ReadyForClone {
             &self.shared.reference.url,
             &self.shared.repository_path,
             callback,
-            &self.shared.ssh_key,
+            self.shared.ssh_key.as_ref(),
         )
         .map_err(|e| CollectionProcessError::Git(GitError::CloneError(e)))?;
 

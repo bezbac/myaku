@@ -233,7 +233,7 @@ impl BaseCollector for PatternOccurences {
                     if !globs.is_match_candidate(&Candidate::new(path_relative_to_root)) {
                         continue;
                     }
-                };
+                }
 
                 debug!("searching file: {:?}", path_relative_to_root);
 

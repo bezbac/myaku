@@ -78,7 +78,7 @@ pub struct CommitTagInfo {
     pub commit: CommitHash,
 }
 
-impl<'a> From<Signature<'a>> for Author {
+impl From<Signature<'_>> for Author {
     fn from(item: Signature) -> Self {
         Author {
             name: item.name().map(|v| v.to_string()),
@@ -100,7 +100,7 @@ pub struct TempWorktreeHandle<'r> {
     worktree: WorktreeHandle<'r>,
 }
 
-impl<'r> Drop for TempWorktreeHandle<'r> {
+impl Drop for TempWorktreeHandle<'_> {
     fn drop(&mut self) {
         let res = self
             .worktree
@@ -324,11 +324,11 @@ impl RepositoryHandle {
         main_worktree.get_current_changed_file_paths()
     }
 
-    pub fn create_worktree(
-        &self,
+    pub fn create_worktree<'a>(
+        &'a self,
         worktree_name: &str,
         worktree_path: &Path,
-    ) -> Result<WorktreeHandle, GitError> {
+    ) -> Result<WorktreeHandle<'a>, GitError> {
         let git2_repo: Repository = self.try_into()?;
 
         git2_repo.worktree(worktree_name, worktree_path, None)?;
@@ -348,16 +348,16 @@ impl RepositoryHandle {
 
         WorktreeHandle {
             repo: self,
-            name: main_worktree_name.to_string(),
+            name: main_worktree_name.clone(),
             path: self.path.clone(),
         }
     }
 
-    pub fn create_temp_worktree(
-        &self,
+    pub fn create_temp_worktree<'a>(
+        &'a self,
         worktree_name: &str,
         worktree_path: &Path,
-    ) -> Result<TempWorktreeHandle, GitError> {
+    ) -> Result<TempWorktreeHandle<'a>, GitError> {
         let worktree = self.create_worktree(worktree_name, worktree_path)?;
         Ok(TempWorktreeHandle { worktree })
     }
@@ -384,15 +384,15 @@ impl RepositoryHandle {
     }
 }
 
-impl<'r> TryFrom<&WorktreeHandle<'r>> for Repository {
+impl TryFrom<&WorktreeHandle<'_>> for Repository {
     type Error = git2::Error;
 
-    fn try_from(value: &WorktreeHandle<'r>) -> Result<Self, Self::Error> {
+    fn try_from(value: &WorktreeHandle<'_>) -> Result<Self, Self::Error> {
         Repository::open(&value.path)
     }
 }
 
-impl<'r> WorktreeHandle<'r> {
+impl WorktreeHandle<'_> {
     pub fn reset_hard(&self, revstring: &str) -> Result<(), GitError> {
         let git2_repo: Repository = self.try_into()?;
 
@@ -685,7 +685,7 @@ pub fn clone_repository(
     url: &str,
     directory: &PathBuf,
     progress_callback: impl Fn(&CloneProgress),
-    ssh_key: &Option<PrivateKey>,
+    ssh_key: Option<&PrivateKey>,
 ) -> Result<RepositoryHandle, GitCloneError> {
     let mut command = Command::new(GIT_BINARY_PATH);
     command.arg("clone");
