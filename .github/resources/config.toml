@@ -3,6 +3,10 @@ url = "git@github.com:bezbac/myaku.git"
 
 [metrics]
 
+[metrics.loc]
+collector = "total-loc"
+frequency = "per-commit"
+
 [metrics.todos]
 collector = "pattern-occurences"
 frequency = "per-commit"

@@ -93,21 +93,30 @@ jobs:
 
       - name: Get latest version of the script
         run: |
-          git checkout ${{ github.sha }} -- ./.github/resources/script.ts
+          git checkout ${{ github.sha }} -- ./.github/resources/charts/total-todos-over-time.ts
+          git checkout ${{ github.sha }} -- ./.github/resources/charts/total-loc-over-time.ts
 
-      - name: Generate todo chart
-        id: generate-todo-chart
+      - name: "CHART: total-todos-over-time - generate"
         run: |
-          deno run --allow-all "./.github/resources/script.ts" > todo_chart.svg
+          deno run --allow-all "./.github/resources/charts/total-todos-over-time.ts" > total-todos-over-time.svg
 
-      - name: Show generated svg contents
+      - name: "CHART: total-todos-over-time - debug"
         run: |
-          cat todo_chart.svg
+          cat total-todos-over-time.svg
+
+      - name: "CHART: total-loc-over-time - generate"
+        run: |
+          deno run --allow-all "./.github/resources/charts/total-loc-over-time.ts" > total-loc-over-time.svg
+
+      - name: "CHART: total-loc-over-time - debug"
+        run: |
+          cat total-loc-over-time.svg
 
       - name: Push changes
         run: |
-          git add ./todo_chart.svg
-          git commit --allow-empty -m "Update todo_chart.svg"
+          git add ./total-todos-over-time.svg
+          git add ./total-loc-over-time.svg
+          git commit --allow-empty -m "Update charts"
           git push origin resources
 
       - name: Find Comment
@@ -126,8 +135,11 @@ jobs:
           body: |
             # Overview
 
+            ## Total LOC over time
+            ![Total LOC over time](https://github.com/${{ github.repository }}/blob/resources/total-loc-over-time.svg?raw=true)
+
             ## Total TODO comments over time
-            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/todo_chart.svg?raw=true)
+            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/total-todos-over-time.svg?raw=true)
 
       - name: Update comment
         if: steps.fc.outputs.comment-id != ''
@@ -138,5 +150,8 @@ jobs:
           body: |
             # Overview
 
+            ## Total LOC over time
+            ![Total LOC over time](https://github.com/${{ github.repository }}/blob/resources/total-loc-over-time.svg?raw=true)
+
             ## Total TODO comments over time
-            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/todo_chart.svg?raw=true)
+            ![TODO comments over time](https://github.com/${{ github.repository }}/blob/resources/total-todos-over-time.svg?raw=true)
