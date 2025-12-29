@@ -1,12 +1,8 @@
-use crate::{
-    collectors::CollectorValue,
-    git::{CommitHash, CommitInfo, CommitTagInfo},
-};
-
 mod json;
 mod parquet;
 
 pub use json::{JsonOutput, JsonOutputError};
+use myaku::{CollectorValue, CommitHash, CommitInfo, CommitTagInfo};
 pub use parquet::{ParquetOutput, ParquetOutputError};
 use thiserror::Error;
 

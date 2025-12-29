@@ -9,18 +9,14 @@ use arrow::{
     array::{Array, ArrayRef, RecordBatch, StringArray},
     datatypes::{Field, FieldRef, Schema},
 };
+use myaku::{
+    ChangedFilesLocValue, ChangedFilesValue, CollectorValue, CommitHash, CommitInfo, CommitTagInfo,
+    FileListValue, LocValue, PatternOccurencesValue, TotalCargoDependenciesValue,
+    TotalDiffStatValue, TotalFileCountValue, TotalLocValue, TotalPatternOccurencesValue,
+};
 use parquet::{arrow::ArrowWriter, basic::Compression, file::properties::WriterProperties};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
 use thiserror::Error;
-
-use crate::{
-    collectors::{
-        ChangedFilesLocValue, ChangedFilesValue, CollectorValue, FileListValue, LocValue,
-        PatternOccurencesValue, TotalCargoDependenciesValue, TotalDiffStatValue,
-        TotalFileCountValue, TotalLocValue, TotalPatternOccurencesValue,
-    },
-    git::{CommitHash, CommitInfo, CommitTagInfo},
-};
 
 use super::Output;
 

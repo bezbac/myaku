@@ -10,16 +10,18 @@ use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use myaku::{
-    Cache, FileCache, Initial, JsonOutput, OutputObj, ParquetOutput, SharedCollectionProcessState,
-};
+use myaku::{Cache, FileCache, Initial, SharedCollectionProcessState};
+use output::{JsonOutput, OutputObj, ParquetOutput};
 use serde::Serialize;
 use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{prelude::*, registry::Registry};
 
+use crate::output::Output;
+
 mod config;
+mod output;
 mod util;
 
 // TODO: Add debug / verbosity flag
@@ -202,7 +204,7 @@ fn main() -> Result<ExitCode> {
                 .output_path
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
 
-            let output: OutputObj = match output_type {
+            let mut output: OutputObj = match output_type {
                 OutputType::Json => OutputObj::Json(JsonOutput::new(&output_dir)),
                 OutputType::Parquet => OutputObj::Parquet(ParquetOutput::new(&output_dir)),
             };
@@ -219,24 +221,24 @@ fn main() -> Result<ExitCode> {
                 style(&repository_name).underlined()
             )?;
 
-            let process = Initial::new(SharedCollectionProcessState {
-                reference: config.reference,
+            let process = Initial::new(
+                config.metrics,
+                SharedCollectionProcessState {
+                    reference: config.reference,
 
-                metrics: config.metrics,
+                    repository_path: reference_dir.clone(),
+                    worktree_path: worktree_dir,
+                    cache,
 
-                repository_path: reference_dir.clone(),
-                worktree_path: worktree_dir,
-                output,
-                cache,
+                    ssh_key: None,
 
-                ssh_key: None,
+                    disable_cache: *disable_cache,
 
-                disable_cache: *disable_cache,
-
-                force_latest_commit: true,
-                offline: *offline,
-                ignore_mismatched_repo_url: *ignore_mismatched_repo_url,
-            })
+                    force_latest_commit: true,
+                    offline: *offline,
+                    ignore_mismatched_repo_url: *ignore_mismatched_repo_url,
+                },
+            )
             .initialize()?;
 
             let process = match process {
@@ -325,12 +327,29 @@ fn main() -> Result<ExitCode> {
             term.clear_last_lines(1)?;
             info!("Collected commit information")?;
 
+            if !disable_cache {
+                output.load()?;
+
+                // Fill storage from previous output
+                for commit in &process.commits {
+                    for (metric_name, metric_config) in &process.metrics {
+                        if let Some(value) = output.get_metric(metric_name, &commit.id)? {
+                            process.storage.insert(
+                                (metric_config.collector.clone(), commit.id.clone()),
+                                value,
+                            );
+                        }
+                    }
+                }
+            }
+
             info!("Collecting tag information")?;
             let process = process.collect_tags()?;
             term.clear_last_lines(1)?;
             info!("Collected tag information")?;
 
             info!("Building execution graph")?;
+
             let process = process.prepare_for_collection()?;
             term.clear_last_lines(1)?;
             info!("Built execution graph")?;
@@ -462,10 +481,27 @@ fn main() -> Result<ExitCode> {
             info!("Wrote data to cache")?;
 
             info!("Writing data to output")?;
-            let process = process.write_to_output()?;
+            output.set_commits(&process.commits)?;
+            if let Some(tags) = &process.tags {
+                output.set_commit_tags(tags)?;
+            }
+            for e in &process.storage {
+                let (collector, commit) = e.key();
+                let value = e.value();
+                let metric_names = process
+                    .metrics
+                    .iter()
+                    .filter(|(_, metric_config)| &metric_config.collector == collector)
+                    .map(|(metric_name, _)| metric_name)
+                    .collect::<Vec<&String>>();
+
+                for metric_name in metric_names {
+                    output.set_metric(metric_name, commit, value)?;
+                }
+            }
+            output.flush()?;
             term.clear_last_lines(1)?;
             info!("Wrote data to output")?;
-
             drop(process);
         }
         None => {}

@@ -4,12 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use myaku::{CollectorValue, CommitHash, CommitInfo, CommitTagInfo};
 use thiserror::Error;
-
-use crate::{
-    collectors::CollectorValue,
-    git::{CommitHash, CommitInfo, CommitTagInfo},
-};
 
 use super::Output;
 
