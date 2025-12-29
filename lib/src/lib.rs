@@ -545,35 +545,3 @@ impl PostCollection {
         Ok(self)
     }
 }
-
-impl CollectionProcess {
-    pub fn run_to_completion(self) -> Result<PostCollection, CollectionProcessError> {
-        let CollectionProcess::Initial(process) = self else {
-            return Err(CollectionProcessError::InvalidState(vec![
-                "Initial".to_string()
-            ]));
-        };
-
-        let process = process.initialize()?;
-
-        let process = match process {
-            CollectionProcess::ReadyForFetch(process) => process.fetch()?,
-            CollectionProcess::ReadyForClone(process) => process.clone(|_| {})?,
-            _ => {
-                return Err(CollectionProcessError::InvalidState(vec![
-                    "ReadyForFetch".to_string(),
-                    "ReadyForClone".to_string(),
-                ]))
-            }
-        };
-
-        let process = process
-            .collect_commits()?
-            .collect_tags()?
-            .prepare_for_collection()?
-            .collect_metrics(None)?
-            .write_to_cache()?;
-
-        Ok(process)
-    }
-}
