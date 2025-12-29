@@ -69,34 +69,70 @@ pub enum CollectionProcessError {
 pub struct Initial {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
+    pub reference: GitRepository,
+    pub repository_path: PathBuf,
+    pub ssh_key: Option<PrivateKey>,
+
+    pub cache: Box<dyn Cache>,
+
+    pub disable_cache: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    pub offline: bool,
 }
 
 pub struct ReadyForClone {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
+    reference: GitRepository,
+    repository_path: PathBuf,
+    ssh_key: Option<PrivateKey>,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    offline: bool,
 }
 
 pub struct ReadyForFetch {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
     repo: RepositoryHandle,
+    reference: GitRepository,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    offline: bool,
 }
 
 pub struct IdleWithoutCommits {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
     repo: RepositoryHandle,
+    branch: Option<String>,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    offline: bool,
 }
 
 pub struct IdleWithCommits {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
     repo: RepositoryHandle,
+    branch: Option<String>,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
+
+    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
+    offline: bool,
+
     pub commits: Vec<CommitInfo>,
     pub tags: Option<Vec<CommitTagInfo>>,
     pub storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
@@ -105,9 +141,11 @@ pub struct IdleWithCommits {
 pub struct ReadyForCollection {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
     repo: RepositoryHandle,
     collection_execution_graph: CollectionExecutionGraph,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
 
     pub commits: Vec<CommitInfo>,
     pub tags: Option<Vec<CommitTagInfo>>,
@@ -119,8 +157,10 @@ pub struct ReadyForCollection {
 pub struct PostCollection {
     pub metrics: HashMap<String, MetricConfig>,
 
-    shared: SharedCollectionProcessState,
     collection_execution_graph: CollectionExecutionGraph,
+
+    cache: Box<dyn Cache>,
+    disable_cache: bool,
 
     pub commits: Vec<CommitInfo>,
     pub tags: Option<Vec<CommitTagInfo>>,
@@ -152,29 +192,6 @@ pub enum CollectionProcess {
     PostCollection(PostCollection),
 }
 
-#[allow(clippy::struct_excessive_bools)]
-pub struct SharedCollectionProcessState {
-    pub reference: GitRepository,
-    pub repository_path: PathBuf,
-
-    pub ssh_key: Option<PrivateKey>,
-
-    pub worktree_path: PathBuf,
-
-    pub cache: Box<dyn Cache>,
-
-    pub disable_cache: bool,
-
-    /// The `force_latest_commit` flag will be passed to the `build_collection_execution_graph` function
-    pub force_latest_commit: bool,
-
-    /// Do not check if the remote URL of the repository matches the one in the config file
-    pub ignore_mismatched_repo_url: bool,
-
-    /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
-    pub offline: bool,
-}
-
 #[derive(Debug)]
 pub enum ExecutionProgressCallbackState {
     Initial {
@@ -193,21 +210,16 @@ pub enum ExecutionProgressCallbackState {
 }
 
 impl Initial {
-    #[must_use]
-    pub fn new(
-        metrics: HashMap<String, MetricConfig>,
-        shared: SharedCollectionProcessState,
-    ) -> Self {
-        Self { metrics, shared }
-    }
-
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn initialize(self) -> Result<CollectionProcess, CollectionProcessError> {
+    pub fn initialize(
+        self,
+        ignore_mismatched_repo_url: bool,
+    ) -> Result<CollectionProcess, CollectionProcessError> {
         if self.metrics.is_empty() {
             return Err(CollectionProcessError::NoMetrics);
         }
 
-        let reference_dir = &self.shared.repository_path;
+        let reference_dir = &self.repository_path;
 
         fs::create_dir_all(reference_dir)?;
 
@@ -215,43 +227,47 @@ impl Initial {
             Result::Ok(repo) => {
                 let remote_url = repo.remote_url()?;
 
-                if remote_url != self.shared.reference.url
-                    && !self.shared.ignore_mismatched_repo_url
-                {
+                if remote_url != self.reference.url && !ignore_mismatched_repo_url {
                     return Err(CollectionProcessError::MismatchedRepositoryUrl);
                 }
 
-                if self.shared.offline {
+                if self.offline {
                     // Skip fetch and clone if offline
                     return Ok(CollectionProcess::IdleWithoutCommits(IdleWithoutCommits {
-                        metrics: self.metrics,
-                        shared: self.shared,
                         repo,
+                        branch: self.reference.branch,
+                        metrics: self.metrics,
+                        cache: self.cache,
+                        disable_cache: self.disable_cache,
+                        offline: self.offline,
                     }));
                 }
 
                 Ok(CollectionProcess::ReadyForFetch(ReadyForFetch {
-                    metrics: self.metrics,
                     repo,
-                    shared: self.shared,
+                    metrics: self.metrics,
+                    reference: self.reference,
+                    cache: self.cache,
+                    disable_cache: self.disable_cache,
+                    offline: self.offline,
                 }))
             }
             Err(e) => {
-                if self.shared.offline {
+                if self.offline {
                     return Err(CollectionProcessError::Git(e));
                 }
 
                 Ok(CollectionProcess::ReadyForClone(ReadyForClone {
                     metrics: self.metrics,
-                    shared: self.shared,
+                    reference: self.reference,
+                    repository_path: self.repository_path,
+                    ssh_key: self.ssh_key,
+                    cache: self.cache,
+                    disable_cache: self.disable_cache,
+                    offline: self.offline,
                 }))
             }
         };
-    }
-
-    #[must_use]
-    pub fn to_process(self) -> CollectionProcess {
-        CollectionProcess::Initial(self)
     }
 }
 
@@ -260,8 +276,11 @@ impl ReadyForFetch {
     pub fn fetch(self) -> Result<IdleWithoutCommits, CollectionProcessError> {
         Ok(IdleWithoutCommits {
             metrics: self.metrics,
-            shared: self.shared,
             repo: self.repo,
+            branch: self.reference.branch,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
+            offline: self.offline,
         })
     }
 }
@@ -273,17 +292,20 @@ impl ReadyForClone {
         callback: impl Fn(&CloneProgress),
     ) -> Result<IdleWithoutCommits, CollectionProcessError> {
         let repo = clone_repository(
-            &self.shared.reference.url,
-            &self.shared.repository_path,
+            &self.reference.url,
+            &self.repository_path,
             callback,
-            self.shared.ssh_key.as_ref(),
+            self.ssh_key.as_ref(),
         )
         .map_err(|e| CollectionProcessError::Git(GitError::CloneError(e)))?;
 
         Ok(IdleWithoutCommits {
-            metrics: self.metrics,
-            shared: self.shared,
             repo,
+            metrics: self.metrics,
+            branch: self.reference.branch,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
+            offline: self.offline,
         })
     }
 }
@@ -291,7 +313,7 @@ impl ReadyForClone {
 impl IdleWithoutCommits {
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn collect_commits(self) -> Result<IdleWithCommits, CollectionProcessError> {
-        let branch = match &self.shared.reference.branch {
+        let branch = match &self.branch {
             Some(branch) => branch.clone(),
             None => self.repo.find_main_branch()?,
         };
@@ -305,12 +327,15 @@ impl IdleWithoutCommits {
         }
 
         Ok(IdleWithCommits {
-            metrics: self.metrics,
-            shared: self.shared,
-            repo: self.repo,
             commits,
             tags: None,
             storage: DashMap::new(),
+            metrics: self.metrics,
+            repo: self.repo,
+            branch: self.branch,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
+            offline: self.offline,
         })
     }
 }
@@ -318,7 +343,7 @@ impl IdleWithoutCommits {
 impl IdleWithCommits {
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn collect_tags(self) -> Result<IdleWithCommits, CollectionProcessError> {
-        let branch = match &self.shared.reference.branch {
+        let branch = match &self.branch {
             Some(branch) => branch.clone(),
             None => self.repo.find_main_branch()?,
         };
@@ -328,30 +353,32 @@ impl IdleWithCommits {
         let tags = self.repo.get_all_commit_tags()?;
 
         Ok(IdleWithCommits {
+            tags: Some(tags),
             metrics: self.metrics,
-            shared: self.shared,
             repo: self.repo,
             commits: self.commits,
             storage: self.storage,
-            tags: Some(tags),
+            branch: self.branch,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
+            offline: self.offline,
         })
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn prepare_for_collection(self) -> Result<ReadyForCollection, CollectionProcessError> {
-        let collection_execution_graph = build_collection_execution_graph(
-            &self.metrics,
-            &self.commits,
-            self.shared.force_latest_commit,
-        );
+    pub fn prepare_for_collection(
+        self,
+        force_latest_commit: bool,
+    ) -> Result<ReadyForCollection, CollectionProcessError> {
+        let collection_execution_graph =
+            build_collection_execution_graph(&self.metrics, &self.commits, force_latest_commit);
 
-        if !self.shared.disable_cache {
+        if !self.disable_cache {
             // Fill storage from cache
             for nx in collection_execution_graph.graph.node_indices() {
                 let task = &collection_execution_graph.graph[nx];
 
                 if let Some(value) = self
-                    .shared
                     .cache
                     .lookup(&task.collector_config, &task.commit_hash)?
                 {
@@ -371,14 +398,15 @@ impl IdleWithCommits {
             .ok_or(CollectionProcessError::NoCommits)?;
 
         Ok(ReadyForCollection {
+            collection_execution_graph,
+            latest_commit,
             metrics: self.metrics,
-            shared: self.shared,
             repo: self.repo,
             commits: self.commits,
             tags: self.tags,
             storage: self.storage,
-            collection_execution_graph,
-            latest_commit,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
         })
     }
 }
@@ -388,12 +416,13 @@ impl ReadyForCollection {
     pub fn collect_metrics(
         self,
         channel: Option<std::sync::mpsc::Sender<ExecutionProgressCallbackState>>,
+        worktree_path: PathBuf,
     ) -> Result<PostCollection, CollectionProcessError> {
         let alphabet: [char; 16] = [
             '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
         ];
 
-        fs::create_dir_all(&self.shared.worktree_path)?;
+        fs::create_dir_all(&worktree_path)?;
 
         let available_cpus = num_cpus::get();
 
@@ -402,7 +431,7 @@ impl ReadyForCollection {
 
             let handle = self
                 .repo
-                .create_temp_worktree(&id, &self.shared.worktree_path.join(&id))
+                .create_temp_worktree(&id, &worktree_path.join(&id))
                 .expect("Could not create worktree");
 
             handle
@@ -427,7 +456,7 @@ impl ReadyForCollection {
         #[cfg(feature = "rayon")]
         let iter = node_indices.par_iter();
 
-        let disable_cache = self.shared.disable_cache;
+        let disable_cache = self.disable_cache;
 
         if let Some(channel) = &channel {
             channel.send(ExecutionProgressCallbackState::Initial {
@@ -511,12 +540,13 @@ impl ReadyForCollection {
 
         Ok(PostCollection {
             metrics: self.metrics,
-            shared: self.shared,
             collection_execution_graph: self.collection_execution_graph,
             commits: self.commits,
             tags: self.tags,
             storage: self.storage,
             latest_commit: self.latest_commit,
+            cache: self.cache,
+            disable_cache: self.disable_cache,
         })
     }
 }
@@ -524,7 +554,7 @@ impl ReadyForCollection {
 impl PostCollection {
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn write_to_cache(self) -> Result<PostCollection, CollectionProcessError> {
-        if !self.shared.disable_cache {
+        if !self.disable_cache {
             for nx in self.collection_execution_graph.graph.node_indices() {
                 let task = &self.collection_execution_graph.graph[nx];
 
@@ -532,8 +562,7 @@ impl PostCollection {
                     .storage
                     .get(&(task.collector_config.clone(), task.commit_hash.clone()))
                 {
-                    self.shared
-                        .cache
+                    self.cache
                         .store(&task.collector_config, &task.commit_hash, &value)?;
                 }
             }

@@ -10,7 +10,7 @@ use anyhow::{Ok, Result};
 use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use myaku::{Cache, FileCache, Initial, SharedCollectionProcessState};
+use myaku::{Cache, FileCache, Initial};
 use output::{JsonOutput, OutputObj, ParquetOutput};
 use serde::Serialize;
 use tracing::debug;
@@ -221,25 +221,21 @@ fn main() -> Result<ExitCode> {
                 style(&repository_name).underlined()
             )?;
 
-            let process = Initial::new(
-                config.metrics,
-                SharedCollectionProcessState {
-                    reference: config.reference,
+            let process = Initial {
+                metrics: config.metrics,
 
-                    repository_path: reference_dir.clone(),
-                    worktree_path: worktree_dir,
-                    cache,
+                reference: config.reference,
 
-                    ssh_key: None,
+                repository_path: reference_dir.clone(),
+                cache,
 
-                    disable_cache: *disable_cache,
+                ssh_key: None,
 
-                    force_latest_commit: true,
-                    offline: *offline,
-                    ignore_mismatched_repo_url: *ignore_mismatched_repo_url,
-                },
-            )
-            .initialize()?;
+                disable_cache: *disable_cache,
+
+                offline: *offline,
+            }
+            .initialize(*ignore_mismatched_repo_url)?;
 
             let process = match process {
                 myaku::CollectionProcess::IdleWithoutCommits(process) => {
@@ -350,7 +346,7 @@ fn main() -> Result<ExitCode> {
 
             info!("Building execution graph")?;
 
-            let process = process.prepare_for_collection()?;
+            let process = process.prepare_for_collection(true)?;
             term.clear_last_lines(1)?;
             info!("Built execution graph")?;
 
@@ -441,7 +437,7 @@ fn main() -> Result<ExitCode> {
                     }
                 });
 
-                let process = process.collect_metrics(Some(tx))?;
+                let process = process.collect_metrics(Some(tx), worktree_dir)?;
 
                 reader
                     .join()
