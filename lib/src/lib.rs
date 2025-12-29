@@ -47,9 +47,6 @@ pub enum CollectionProcessError {
     #[error("Repository URL in reference directory does not match the one in the config file")]
     MismatchedRepositoryUrl,
 
-    #[error("Invalid state. Expected one of {0:?}")]
-    InvalidState(Vec<String>),
-
     #[error("{0}")]
     BaseCollectorError(#[from] collectors::BaseCollectorError),
 
