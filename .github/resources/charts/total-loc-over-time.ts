@@ -5,20 +5,11 @@ import { JSDOM } from "npm:jsdom";
 
 const cwd = Deno.cwd();
 
-const commits = pl.readParquet(
-  path.join(cwd, ".myaku/output/bezbac/myaku/commits.parquet")
-);
-const loc = pl.readParquet(
-  path.join(cwd, ".myaku/output/bezbac/myaku/metrics/loc/data.parquet")
+let df = pl.readParquet(
+  path.join(cwd, ".myaku/output/bezbac/myaku/total-loc-over-time.parquet")
 );
 
-// Join commits with loc on the commit hash
-let df = commits.join(loc, {
-  leftOn: "id",
-  rightOn: "commit",
-});
-
-const dateValues = [...df.getColumn("time")].map((time) => {
+const dateValues = [...df.getColumn("commit_date")].map((time) => {
   const date = new Date(time * 1000);
   return date.toISOString().split("T")[0];
 });
@@ -26,7 +17,7 @@ const dateValues = [...df.getColumn("time")].map((time) => {
 const dateColumn = pl.Series("date", dateValues);
 
 df = df.withColumn(dateColumn);
-df = df.drop("time");
+df = df.drop("commit_date");
 
 const records = df.sort("date").toRecords();
 
