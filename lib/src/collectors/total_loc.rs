@@ -16,7 +16,7 @@ pub(crate) struct TotalLoc;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TotalLocValue {
-    loc: u32,
+    pub loc: u32,
 }
 
 #[derive(Error, Debug)]

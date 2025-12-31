@@ -342,6 +342,7 @@ impl RepositoryHandle {
         Ok(handle)
     }
 
+    #[must_use]
     pub fn main_worktree(&self) -> WorktreeHandle<'_> {
         // TODO: Find the real name here
         let main_worktree_name = String::from("main");

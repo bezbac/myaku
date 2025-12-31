@@ -52,7 +52,7 @@ pub(crate) struct TotalCargoDependencies;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotalCargoDependenciesValue {
-    total_dependencies: u32,
+    pub total_dependencies: u32,
 }
 
 #[derive(Error, Debug)]

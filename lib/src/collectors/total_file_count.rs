@@ -15,7 +15,7 @@ pub(crate) struct TotalFileCount;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TotalFileCountValue {
-    total_file_count: u32,
+    pub total_file_count: u32,
 }
 
 #[derive(Error, Debug)]

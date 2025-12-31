@@ -18,7 +18,6 @@ use thiserror::Error;
 use tracing::{debug, span, Level};
 
 use crate::git::clone_repository;
-use crate::git::RepositoryHandle;
 use crate::graph::build_collection_execution_graph;
 
 mod cache;
@@ -34,7 +33,7 @@ pub use collectors::{
     TotalLocValue, TotalPatternOccurencesValue,
 };
 pub use config::{CollectorConfig, Frequency, GitRepository, MetricConfig};
-pub use git::{CloneProgress, CommitHash, CommitInfo, CommitTagInfo};
+pub use git::{CloneProgress, CommitHash, CommitInfo, CommitTagInfo, RepositoryHandle};
 
 #[derive(Error, Debug)]
 pub enum CollectionProcessError {
@@ -83,9 +82,9 @@ pub struct Initial {
 
 pub struct ReadyForClone {
     pub metrics: HashMap<String, MetricConfig>,
+    pub repository_path: PathBuf,
 
     reference: GitRepository,
-    repository_path: PathBuf,
     ssh_key: Option<PrivateKey>,
 
     cache: Box<dyn Cache>,
@@ -311,6 +310,11 @@ impl ReadyForClone {
 }
 
 impl IdleWithoutCommits {
+    #[must_use]
+    pub fn get_repository_path(&self) -> &PathBuf {
+        &self.repo.path
+    }
+
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn collect_commits(self) -> Result<IdleWithCommits, CollectionProcessError> {
         let branch = match &self.branch {

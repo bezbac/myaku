@@ -20,7 +20,7 @@ pub(crate) struct TotalPatternOccurences {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TotalPatternOccurencesValue {
-    total_occurences: u32,
+    pub total_occurences: u32,
 }
 
 #[derive(Error, Debug)]
