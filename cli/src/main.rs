@@ -58,6 +58,15 @@ enum OutputType {
 }
 
 #[derive(Subcommand)]
+enum Query {
+    TotalLocOverTime,
+    TotalPatternOccurencesOverTime {
+        #[arg(long)]
+        pattern: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Collect metrics
     Collect {
@@ -78,6 +87,9 @@ enum Commands {
     },
     /// Request a singular metric
     Query {
+        #[clap(subcommand)]
+        query: Query,
+
         // TODO: Validate: Either of the following:
         // 1. A repository path is provided and contains a git repository (uses existing repo)
         // 2. A repository URL is provided, optionally with a branch (clones into pre-defined directory)
@@ -578,6 +590,7 @@ fn main() -> Result<ExitCode> {
             drop(process);
         }
         Some(Commands::Query {
+            query,
             file,
             repository_url,
             repository_branch,
@@ -644,14 +657,29 @@ fn main() -> Result<ExitCode> {
 
             let mut metrics = HashMap::new();
 
-            // TODO: Create metric config based on CLI arguments / config file
-            metrics.insert(
-                "total-loc-over-time".to_string(),
-                MetricConfig {
-                    collector: myaku::CollectorConfig::TotalLoc,
-                    frequency: myaku::Frequency::PerCommit,
-                },
-            );
+            match query {
+                Query::TotalLocOverTime => {
+                    metrics.insert(
+                        "total-loc-over-time".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::TotalLoc,
+                            frequency: myaku::Frequency::PerCommit,
+                        },
+                    );
+                }
+                Query::TotalPatternOccurencesOverTime { pattern } => {
+                    metrics.insert(
+                        "total-pattern-occurences-over-time".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::TotalPatternOccurences {
+                                pattern: pattern.clone(),
+                                files: None,
+                            },
+                            frequency: myaku::Frequency::PerCommit,
+                        },
+                    );
+                }
+            }
 
             let process = Initial {
                 metrics,
@@ -680,39 +708,85 @@ fn main() -> Result<ExitCode> {
 
             let mut commit_hashes = vec![];
             let mut commit_dates = vec![];
-            let mut commit_loc = vec![];
 
-            for commit in &process.commits {
-                commit_hashes.push(commit.id.0.clone());
-                commit_dates.push(commit.time.timestamp());
-                let loc_value = process
-                    .storage
-                    .get(&(CollectorConfig::TotalLoc, commit.id.clone()));
+            let mut df = match query {
+                Query::TotalLocOverTime => {
+                    let mut commit_loc = vec![];
 
-                let Some(loc_value) = loc_value else {
-                    error!("Missing LOC value for commit {}", commit.id)?;
-                    return Ok(ExitCode::from(1));
-                };
+                    for commit in &process.commits {
+                        commit_hashes.push(commit.id.0.clone());
+                        commit_dates.push(commit.time.timestamp());
+                        let loc_value = process
+                            .storage
+                            .get(&(CollectorConfig::TotalLoc, commit.id.clone()));
 
-                let CollectorValue::TotalLoc(loc_value) = loc_value.clone() else {
-                    error!("Unexpected collector value")?;
-                    return Ok(ExitCode::from(1));
-                };
+                        let Some(loc_value) = loc_value else {
+                            error!("Missing LOC value for commit {}", commit.id)?;
+                            return Ok(ExitCode::from(1));
+                        };
 
-                commit_loc.push(loc_value.loc);
-            }
+                        let CollectorValue::TotalLoc(loc_value) = loc_value.clone() else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
 
-            drop(process);
+                        commit_loc.push(loc_value.loc);
+                    }
 
-            let mut df = DataFrame::new(vec![
-                Column::new("commit_hash".into(), commit_hashes),
-                Column::new("commit_date".into(), commit_dates),
-                Column::new("loc".into(), commit_loc),
-            ])?
-            .sort(
-                ["commit_date"],
-                SortMultipleOptions::new().with_order_descending(true),
-            )?;
+                    drop(process);
+
+                    DataFrame::new(vec![
+                        Column::new("commit_hash".into(), commit_hashes),
+                        Column::new("commit_date".into(), commit_dates),
+                        Column::new("loc".into(), commit_loc),
+                    ])?
+                    .sort(
+                        ["commit_date"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::TotalPatternOccurencesOverTime { pattern } => {
+                    let mut commit_pattern_occurences = vec![];
+
+                    for commit in &process.commits {
+                        commit_hashes.push(commit.id.0.clone());
+                        commit_dates.push(commit.time.timestamp());
+                        let pattern_occurences_value = process.storage.get(&(
+                            CollectorConfig::TotalPatternOccurences {
+                                pattern: pattern.clone(),
+                                files: None,
+                            },
+                            commit.id.clone(),
+                        ));
+
+                        let Some(pattern_occurences_value) = pattern_occurences_value else {
+                            error!("Missing pattern occurences count for commit {}", commit.id)?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        let CollectorValue::TotalPatternOccurences(pattern_occurences_value) =
+                            pattern_occurences_value.clone()
+                        else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        commit_pattern_occurences.push(pattern_occurences_value.total_occurences);
+                    }
+
+                    drop(process);
+
+                    DataFrame::new(vec![
+                        Column::new("commit_hash".into(), commit_hashes),
+                        Column::new("commit_date".into(), commit_dates),
+                        Column::new("total_occurences".into(), commit_pattern_occurences),
+                    ])?
+                    .sort(
+                        ["commit_date"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+            };
 
             info!("Writing to output")?;
             let writer = OpenOptions::new()

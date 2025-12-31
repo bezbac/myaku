@@ -48,7 +48,7 @@ jobs:
 
       - name: Extract total-loc-over-time data
         run: |
-          cargo run -- --trace query --path $(pwd) --file ./output/total-loc-over-time.parquet --offline --ignore-mismatched-repo-url
+          cargo run -- --trace query --path $(pwd) --file ./output/total-loc-over-time.parquet --offline --ignore-mismatched-repo-url total-loc-over-time
 
       - uses: actions/upload-artifact@v4
         id: upload-artifact
