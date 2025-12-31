@@ -5,20 +5,11 @@ import { JSDOM } from "npm:jsdom";
 
 const cwd = Deno.cwd();
 
-const commits = pl.readParquet(
-  path.join(cwd, ".myaku/output/bezbac/myaku/commits.parquet")
-);
-const todos = pl.readParquet(
-  path.join(cwd, ".myaku/output/bezbac/myaku/metrics/todos/data.parquet")
+let df = pl.readParquet(
+  path.join(cwd, ".myaku/output/bezbac/myaku/total-todos-over-time.parquet")
 );
 
-// Join commits with todos on the commit hash
-let df = commits.join(todos, {
-  leftOn: "id",
-  rightOn: "commit",
-});
-
-const dateValues = [...df.getColumn("time")].map((time) => {
+const dateValues = [...df.getColumn("commit_date")].map((time) => {
   const date = new Date(time * 1000);
   return date.toISOString().split("T")[0];
 });
@@ -26,21 +17,7 @@ const dateValues = [...df.getColumn("time")].map((time) => {
 const dateColumn = pl.Series("date", dateValues);
 
 df = df.withColumn(dateColumn);
-df = df.drop("time");
-
-const matchesValues = JSON.parse(
-  (df.getColumn("matches") as pl.Series).toJSON()
-).values;
-
-df = df.drop("matches");
-
-const countValues = matchesValues.map((data: any) => {
-  return data.length;
-});
-
-const countColumn = pl.Series("count", countValues);
-
-df = df.withColumn(countColumn);
+df = df.drop("commit_date");
 
 const records = df.sort("date").toRecords();
 

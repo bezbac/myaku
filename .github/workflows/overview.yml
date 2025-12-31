@@ -33,18 +33,13 @@ jobs:
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.91.0
 
-      - name: Create config file config
+      - name: Create output directory
         run: |
-          ROOT_PATH=$(pwd)
-          cp ./.github/resources/config.toml ~/.config/myaku.config.toml
-          sed -i '1ioutput_path = "./output"' ~/.config/myaku.config.toml
-          sed -i '1icache_path = "./cache"' ~/.config/myaku.config.toml
-          sed -i '1irepository_path = "'"$ROOT_PATH"'"' ~/.config/myaku.config.toml
-          cat ~/.config/myaku.config.toml
+          mkdir output
 
-      - name: Extract data
+      - name: Extract total-todos-over-time data
         run: |
-          cargo run -- --trace collect --config ~/.config/myaku.config.toml --offline --ignore-mismatched-repo-url
+          cargo run -- --trace query --path $(pwd) --file ./output/total-todos-over-time.parquet --offline --ignore-mismatched-repo-url total-pattern-occurences-over-time --pattern "// TODO"
 
       - name: Extract total-loc-over-time data
         run: |

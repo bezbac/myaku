@@ -779,7 +779,7 @@ fn main() -> Result<ExitCode> {
                     DataFrame::new(vec![
                         Column::new("commit_hash".into(), commit_hashes),
                         Column::new("commit_date".into(), commit_dates),
-                        Column::new("total_occurences".into(), commit_pattern_occurences),
+                        Column::new("count".into(), commit_pattern_occurences),
                     ])?
                     .sort(
                         ["commit_date"],
