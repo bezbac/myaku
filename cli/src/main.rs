@@ -533,12 +533,15 @@ fn main() -> Result<ExitCode> {
                 OutputType::Parquet => OutputObj::Parquet(ParquetOutput::new(&output_dir)),
             };
 
-            let cache_directory = config
-                .cache_path
-                .unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
-
-            let cache = FileCache::new(&cache_directory);
-            let cache: Box<dyn Cache> = Box::new(cache);
+            let cache: Option<Box<dyn Cache>> = if *disable_cache {
+                None
+            } else {
+                let cache_directory = config
+                    .cache_path
+                    .unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
+                let cache = FileCache::new(&cache_directory);
+                Some(Box::new(cache))
+            };
 
             let process = Initial {
                 metrics: config.metrics,
@@ -549,8 +552,6 @@ fn main() -> Result<ExitCode> {
                 cache,
 
                 ssh_key: None,
-
-                disable_cache: *disable_cache,
 
                 offline: *offline,
             }
@@ -648,12 +649,15 @@ fn main() -> Result<ExitCode> {
             let reference_dir =
                 reference_dir.unwrap_or(get_repository_path(&repository_name, None)?);
 
-            let cache_directory = cache_path
-                .clone()
-                .unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
-
-            let cache = FileCache::new(&cache_directory);
-            let cache: Box<dyn Cache> = Box::new(cache);
+            let cache: Option<Box<dyn Cache>> = if *disable_cache {
+                None
+            } else {
+                let cache_directory = cache_path
+                    .clone()
+                    .unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
+                let cache = FileCache::new(&cache_directory);
+                Some(Box::new(cache))
+            };
 
             let mut metrics = HashMap::new();
 
@@ -690,8 +694,6 @@ fn main() -> Result<ExitCode> {
                 cache,
 
                 ssh_key: None,
-
-                disable_cache: *disable_cache,
 
                 offline: *offline,
             }

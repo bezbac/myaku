@@ -72,9 +72,7 @@ pub struct Initial {
     pub repository_path: PathBuf,
     pub ssh_key: Option<PrivateKey>,
 
-    pub cache: Box<dyn Cache>,
-
-    pub disable_cache: bool,
+    pub cache: Option<Box<dyn Cache>>,
 
     /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
     pub offline: bool,
@@ -87,8 +85,7 @@ pub struct ReadyForClone {
     reference: GitRepository,
     ssh_key: Option<PrivateKey>,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
     offline: bool,
@@ -100,8 +97,7 @@ pub struct ReadyForFetch {
     repo: RepositoryHandle,
     reference: GitRepository,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
     offline: bool,
@@ -113,8 +109,7 @@ pub struct IdleWithoutCommits {
     repo: RepositoryHandle,
     branch: Option<String>,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
     offline: bool,
@@ -126,8 +121,7 @@ pub struct IdleWithCommits {
     repo: RepositoryHandle,
     branch: Option<String>,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     /// If true, do not attempt to perform any network operations (clone, fetch, etc.)
     offline: bool,
@@ -143,8 +137,7 @@ pub struct ReadyForCollection {
     repo: RepositoryHandle,
     collection_execution_graph: CollectionExecutionGraph,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     pub commits: Vec<CommitInfo>,
     pub tags: Option<Vec<CommitTagInfo>>,
@@ -158,8 +151,7 @@ pub struct PostCollection {
 
     collection_execution_graph: CollectionExecutionGraph,
 
-    cache: Box<dyn Cache>,
-    disable_cache: bool,
+    cache: Option<Box<dyn Cache>>,
 
     pub commits: Vec<CommitInfo>,
     pub tags: Option<Vec<CommitTagInfo>>,
@@ -237,7 +229,6 @@ impl Initial {
                         branch: self.reference.branch,
                         metrics: self.metrics,
                         cache: self.cache,
-                        disable_cache: self.disable_cache,
                         offline: self.offline,
                     }));
                 }
@@ -247,7 +238,6 @@ impl Initial {
                     metrics: self.metrics,
                     reference: self.reference,
                     cache: self.cache,
-                    disable_cache: self.disable_cache,
                     offline: self.offline,
                 }))
             }
@@ -262,7 +252,6 @@ impl Initial {
                     repository_path: self.repository_path,
                     ssh_key: self.ssh_key,
                     cache: self.cache,
-                    disable_cache: self.disable_cache,
                     offline: self.offline,
                 }))
             }
@@ -278,7 +267,6 @@ impl ReadyForFetch {
             repo: self.repo,
             branch: self.reference.branch,
             cache: self.cache,
-            disable_cache: self.disable_cache,
             offline: self.offline,
         })
     }
@@ -303,7 +291,6 @@ impl ReadyForClone {
             metrics: self.metrics,
             branch: self.reference.branch,
             cache: self.cache,
-            disable_cache: self.disable_cache,
             offline: self.offline,
         })
     }
@@ -338,7 +325,6 @@ impl IdleWithoutCommits {
             repo: self.repo,
             branch: self.branch,
             cache: self.cache,
-            disable_cache: self.disable_cache,
             offline: self.offline,
         })
     }
@@ -364,7 +350,6 @@ impl IdleWithCommits {
             storage: self.storage,
             branch: self.branch,
             cache: self.cache,
-            disable_cache: self.disable_cache,
             offline: self.offline,
         })
     }
@@ -377,15 +362,12 @@ impl IdleWithCommits {
         let collection_execution_graph =
             build_collection_execution_graph(&self.metrics, &self.commits, force_latest_commit);
 
-        if !self.disable_cache {
+        if let Some(cache) = &self.cache {
             // Fill storage from cache
             for nx in collection_execution_graph.graph.node_indices() {
                 let task = &collection_execution_graph.graph[nx];
 
-                if let Some(value) = self
-                    .cache
-                    .lookup(&task.collector_config, &task.commit_hash)?
-                {
+                if let Some(value) = cache.lookup(&task.collector_config, &task.commit_hash)? {
                     self.storage.insert(
                         (task.collector_config.clone(), task.commit_hash.clone()),
                         value,
@@ -410,7 +392,6 @@ impl IdleWithCommits {
             tags: self.tags,
             storage: self.storage,
             cache: self.cache,
-            disable_cache: self.disable_cache,
         })
     }
 }
@@ -460,14 +441,14 @@ impl ReadyForCollection {
         #[cfg(feature = "rayon")]
         let iter = node_indices.par_iter();
 
-        let disable_cache = self.disable_cache;
-
         if let Some(channel) = &channel {
             channel.send(ExecutionProgressCallbackState::Initial {
                 metric_count: self.metrics.len(),
                 task_count: self.collection_execution_graph.graph.node_count(),
             })?;
         }
+
+        let disable_cache = self.cache.is_none();
 
         let _: Vec<Result<(), CollectionProcessError>> = iter
             .cloned()
@@ -550,7 +531,6 @@ impl ReadyForCollection {
             storage: self.storage,
             latest_commit: self.latest_commit,
             cache: self.cache,
-            disable_cache: self.disable_cache,
         })
     }
 }
@@ -558,7 +538,7 @@ impl ReadyForCollection {
 impl PostCollection {
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn write_to_cache(self) -> Result<PostCollection, CollectionProcessError> {
-        if !self.disable_cache {
+        if let Some(cache) = &self.cache {
             for nx in self.collection_execution_graph.graph.node_indices() {
                 let task = &self.collection_execution_graph.graph[nx];
 
@@ -566,8 +546,7 @@ impl PostCollection {
                     .storage
                     .get(&(task.collector_config.clone(), task.commit_hash.clone()))
                 {
-                    self.cache
-                        .store(&task.collector_config, &task.commit_hash, &value)?;
+                    cache.store(&task.collector_config, &task.commit_hash, &value)?;
                 }
             }
         }
