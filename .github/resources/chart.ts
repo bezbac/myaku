@@ -1,13 +1,14 @@
 import * as pl from "npm:nodejs-polars@0.18.0";
-import * as Plot from "npm:@observablehq/plot";
+import * as Plot from "npm:@observablehq/plot@0.6.17";
 import * as path from "https://deno.land/std@0.203.0/path/mod.ts";
-import { JSDOM } from "npm:jsdom";
+import { JSDOM } from "npm:jsdom@27.4.0";
+
+const dfPath = Deno.args[0];
+const yAxisColumn = Deno.args[1];
 
 const cwd = Deno.cwd();
 
-let df = pl.readParquet(
-  path.join(cwd, ".myaku/output/bezbac/myaku/total-loc-over-time.parquet")
-);
+let df = pl.readParquet(path.join(cwd, dfPath));
 
 const dateValues = [...df.getColumn("commit_date")].map((time) => {
   const date = new Date(time * 1000);
@@ -47,7 +48,7 @@ const plot = Plot.plot({
   marks: [
     Plot.line(normalized, {
       x: "date",
-      y: "loc",
+      y: yAxisColumn,
       curve: "step-after",
       stroke: "steelblue",
     }),

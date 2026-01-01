@@ -92,12 +92,11 @@ jobs:
 
       - name: Get latest version of the script
         run: |
-          git checkout ${{ github.sha }} -- ./.github/resources/charts/total-todos-over-time.ts
-          git checkout ${{ github.sha }} -- ./.github/resources/charts/total-loc-over-time.ts
+          git checkout ${{ github.sha }} -- ./.github/resources/chart.ts
 
       - name: "CHART: total-todos-over-time - generate"
         run: |
-          deno run --allow-all "./.github/resources/charts/total-todos-over-time.ts" > total-todos-over-time.svg
+          deno run --allow-all "./.github/resources/chart.ts" ".myaku/output/bezbac/myaku/total-todos-over-time.parquet" "count" > total-todos-over-time.svg
 
       - name: "CHART: total-todos-over-time - debug"
         run: |
@@ -105,7 +104,7 @@ jobs:
 
       - name: "CHART: total-loc-over-time - generate"
         run: |
-          deno run --allow-all "./.github/resources/charts/total-loc-over-time.ts" > total-loc-over-time.svg
+          deno run --allow-all "./.github/resources/chart.ts" ".myaku/output/bezbac/myaku/total-loc-over-time.parquet" "loc" > total-loc-over-time.svg
 
       - name: "CHART: total-loc-over-time - debug"
         run: |
