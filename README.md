@@ -24,7 +24,7 @@ docker build -t myaku:latest .
 ## Running the docker image
 
 ```
-docker run -i -v $(pwd)/example/myaku.config.toml:/etc/myaku.config.toml --rm myaku:latest collect --config /etc/myaku.config.toml
+docker run -i --rm myaku:latest query --url git@github.com:bezbac/myaku.git total-loc-over-time
 ```
 
 Important!: The docker image does not have a valid SSH key setup. Only public repositories that can be cloned via http/https will work.
