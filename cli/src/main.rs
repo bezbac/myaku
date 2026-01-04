@@ -66,10 +66,41 @@ enum QueryOutputType {
     Parquet,
 }
 
+// TODO: Merge with lib Frequency enum
+#[derive(Clone, Debug, clap::ValueEnum, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Frequency {
+    PerCommit,
+    Yearly,
+    Monthly,
+    Weekly,
+    Daily,
+    Hourly,
+}
+
+impl From<&Frequency> for myaku::Frequency {
+    fn from(value: &Frequency) -> Self {
+        match value {
+            Frequency::PerCommit => myaku::Frequency::PerCommit,
+            Frequency::Yearly => myaku::Frequency::Yearly,
+            Frequency::Monthly => myaku::Frequency::Monthly,
+            Frequency::Weekly => myaku::Frequency::Weekly,
+            Frequency::Daily => myaku::Frequency::Daily,
+            Frequency::Hourly => myaku::Frequency::Hourly,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Query {
-    TotalLocOverTime,
+    TotalLocOverTime {
+        #[arg(long, default_value_t = Frequency::PerCommit, value_enum)]
+        frequency: Frequency,
+    },
     TotalPatternOccurencesOverTime {
+        #[arg(long, default_value_t = Frequency::PerCommit, value_enum)]
+        frequency: Frequency,
+
         #[arg(long)]
         pattern: String,
     },
@@ -680,16 +711,16 @@ fn main() -> Result<ExitCode> {
             let mut metrics = HashMap::new();
 
             match query {
-                Query::TotalLocOverTime => {
+                Query::TotalLocOverTime { frequency } => {
                     metrics.insert(
                         "total-loc-over-time".to_string(),
                         MetricConfig {
                             collector: myaku::CollectorConfig::TotalLoc,
-                            frequency: myaku::Frequency::PerCommit,
+                            frequency: frequency.into(),
                         },
                     );
                 }
-                Query::TotalPatternOccurencesOverTime { pattern } => {
+                Query::TotalPatternOccurencesOverTime { pattern, frequency } => {
                     metrics.insert(
                         "total-pattern-occurences-over-time".to_string(),
                         MetricConfig {
@@ -697,7 +728,7 @@ fn main() -> Result<ExitCode> {
                                 pattern: pattern.clone(),
                                 files: None,
                             },
-                            frequency: myaku::Frequency::PerCommit,
+                            frequency: frequency.into(),
                         },
                     );
                 }
@@ -730,19 +761,16 @@ fn main() -> Result<ExitCode> {
             let mut commit_dates = vec![];
 
             let mut df = match query {
-                Query::TotalLocOverTime => {
+                Query::TotalLocOverTime { frequency: _ } => {
                     let mut commit_loc = vec![];
 
                     for commit in &process.commits {
-                        commit_hashes.push(commit.id.0.clone());
-                        commit_dates.push(commit.time.timestamp());
                         let loc_value = process
                             .storage
                             .get(&(CollectorConfig::TotalLoc, commit.id.clone()));
 
                         let Some(loc_value) = loc_value else {
-                            error!("Missing LOC value for commit {}", commit.id)?;
-                            return Ok(ExitCode::from(1));
+                            continue;
                         };
 
                         let CollectorValue::TotalLoc(loc_value) = loc_value.clone() else {
@@ -750,6 +778,8 @@ fn main() -> Result<ExitCode> {
                             return Ok(ExitCode::from(1));
                         };
 
+                        commit_hashes.push(commit.id.0.clone());
+                        commit_dates.push(commit.time.timestamp());
                         commit_loc.push(loc_value.loc);
                     }
 
@@ -765,12 +795,13 @@ fn main() -> Result<ExitCode> {
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
-                Query::TotalPatternOccurencesOverTime { pattern } => {
-                    let mut commit_pattern_occurences = vec![];
+                Query::TotalPatternOccurencesOverTime {
+                    frequency: _,
+                    pattern,
+                } => {
+                    let mut commit_pattern_occurences: Vec<u32> = vec![];
 
                     for commit in &process.commits {
-                        commit_hashes.push(commit.id.0.clone());
-                        commit_dates.push(commit.time.timestamp());
                         let pattern_occurences_value = process.storage.get(&(
                             CollectorConfig::TotalPatternOccurences {
                                 pattern: pattern.clone(),
@@ -780,8 +811,7 @@ fn main() -> Result<ExitCode> {
                         ));
 
                         let Some(pattern_occurences_value) = pattern_occurences_value else {
-                            error!("Missing pattern occurences count for commit {}", commit.id)?;
-                            return Ok(ExitCode::from(1));
+                            continue;
                         };
 
                         let CollectorValue::TotalPatternOccurences(pattern_occurences_value) =
@@ -791,6 +821,8 @@ fn main() -> Result<ExitCode> {
                             return Ok(ExitCode::from(1));
                         };
 
+                        commit_hashes.push(commit.id.0.clone());
+                        commit_dates.push(commit.time.timestamp());
                         commit_pattern_occurences.push(pattern_occurences_value.total_occurences);
                     }
 
