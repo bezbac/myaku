@@ -51,9 +51,18 @@ struct Cli {
 
 #[derive(Clone, Debug, Default, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
-enum OutputType {
+enum CollectOutputType {
     Json,
     #[default]
+    Parquet,
+}
+
+#[derive(Clone, Debug, Default, clap::ValueEnum, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum QueryOutputType {
+    #[default]
+    Csv,
+    Jsonl,
     Parquet,
 }
 
@@ -83,7 +92,7 @@ enum Commands {
         ignore_mismatched_repo_url: bool,
 
         #[arg(long, default_value_t, value_enum)]
-        output: OutputType,
+        output: CollectOutputType,
     },
     /// Request a singular metric
     Query {
@@ -102,9 +111,12 @@ enum Commands {
         #[arg(long("path"))]
         repository_path: Option<PathBuf>,
 
-        #[arg(short, long)]
+        #[arg(long("output"), default_value_t, value_enum)]
+        output_type: QueryOutputType,
+
+        #[arg(short('f'), long("file"))]
         /// Path to output file
-        file: PathBuf,
+        output_file: Option<PathBuf>,
 
         #[arg(short, long)]
         cache_path: Option<PathBuf>,
@@ -529,8 +541,8 @@ fn main() -> Result<ExitCode> {
                 .unwrap_or(PathBuf::from(format!(".myaku/output/{repository_name}")));
 
             let mut output: OutputObj = match output_type {
-                OutputType::Json => OutputObj::Json(JsonOutput::new(&output_dir)),
-                OutputType::Parquet => OutputObj::Parquet(ParquetOutput::new(&output_dir)),
+                CollectOutputType::Json => OutputObj::Json(JsonOutput::new(&output_dir)),
+                CollectOutputType::Parquet => OutputObj::Parquet(ParquetOutput::new(&output_dir)),
             };
 
             let cache: Option<Box<dyn Cache>> = if *disable_cache {
@@ -592,7 +604,8 @@ fn main() -> Result<ExitCode> {
         }
         Some(Commands::Query {
             query,
-            file,
+            output_type,
+            output_file,
             repository_url,
             repository_branch,
             repository_path,
@@ -601,6 +614,11 @@ fn main() -> Result<ExitCode> {
             offline,
             ignore_mismatched_repo_url,
         }) => {
+            if output_type == &QueryOutputType::Parquet && output_file.is_none() {
+                error!("Output file must be specified for parquet output")?;
+                return Ok(ExitCode::from(1));
+            }
+
             let (reference, reference_dir) = match (repository_url, repository_path) {
                 (Some(url), Some(path)) => {
                     let reference = GitRepository {
@@ -790,16 +808,50 @@ fn main() -> Result<ExitCode> {
                 }
             };
 
-            info!("Writing to output")?;
-            let writer = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(file)?;
-            let parquet_writer = ParquetWriter::new(writer);
-            parquet_writer.finish(&mut df)?;
-            term.clear_last_lines(1)?;
-            info!("Wrote output to {}", file.display())?;
+            if let Some(output_file) = output_file {
+                info!("Writing to output")?;
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(output_file)?;
+
+                match output_type {
+                    QueryOutputType::Csv => {
+                        let mut writer = CsvWriter::new(file);
+                        writer.finish(&mut df)?;
+                    }
+                    QueryOutputType::Jsonl => {
+                        let mut writer = JsonWriter::new(file);
+                        writer.finish(&mut df)?;
+                    }
+                    QueryOutputType::Parquet => {
+                        let writer = ParquetWriter::new(file);
+                        writer.finish(&mut df)?;
+                    }
+                }
+
+                term.clear_last_lines(1)?;
+                info!("Wrote output to {}", output_file.display())?;
+            } else {
+                info!("Result:\n")?;
+
+                match output_type {
+                    QueryOutputType::Csv => {
+                        let mut writer = CsvWriter::new(term);
+                        writer.finish(&mut df)?;
+                    }
+                    QueryOutputType::Jsonl => {
+                        let mut writer = JsonWriter::new(term);
+                        writer.finish(&mut df)?;
+                    }
+                    QueryOutputType::Parquet => {
+                        // TODO: Prevent this case on a type level
+                        error!("Parquet output requires an output file to be specified")?;
+                        return Ok(ExitCode::from(1));
+                    }
+                }
+            }
         }
         None => {}
     }

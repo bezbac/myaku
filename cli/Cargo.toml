@@ -17,6 +17,7 @@ parquet = "52.0.0"
 polars = { version = "0.48.0", features = [
     "parquet",
     "lazy",
+    "json",
     "dtype-date",
     "dtype-datetime",
 ] }
