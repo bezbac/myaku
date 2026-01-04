@@ -1,6 +1,6 @@
 use regex::Regex;
 
-pub fn get_repository_name_from_url(url: &str) -> Option<String> {
+pub(crate) fn get_repository_name_from_url(url: &str) -> Option<String> {
     if url.contains("://github.com") {
         let parts: Vec<&str> = url.split('/').collect();
         if parts.len() >= 5 {

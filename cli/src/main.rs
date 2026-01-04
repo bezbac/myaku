@@ -136,7 +136,7 @@ enum Commands {
 struct EmptyTermTarget(io::Empty);
 
 impl EmptyTermTarget {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(io::empty())
     }
 }
