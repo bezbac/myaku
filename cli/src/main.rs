@@ -77,6 +77,7 @@ impl From<&Frequency> for myaku::Frequency {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Subcommand)]
 enum Query {
     TotalLocOverTime {
@@ -90,6 +91,7 @@ enum Query {
         #[arg(long)]
         pattern: String,
     },
+    TotalDiffByAuthorEmail,
 }
 
 #[derive(Subcommand)]
@@ -327,6 +329,15 @@ fn main() -> Result<ExitCode> {
                                 files: None,
                             },
                             frequency: frequency.into(),
+                        },
+                    );
+                }
+                Query::TotalDiffByAuthorEmail => {
+                    metrics.insert(
+                        "total-diff-stat-over-time".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::TotalDiffStat,
+                            frequency: myaku::Frequency::PerCommit,
                         },
                     );
                 }
@@ -579,11 +590,10 @@ fn main() -> Result<ExitCode> {
             term.clear_last_lines(1)?;
             info!("Wrote data to cache")?;
 
-            let mut commit_hashes = vec![];
-            let mut commit_dates = vec![];
-
             let mut df = match query {
                 Query::TotalLocOverTime { frequency: _ } => {
+                    let mut commit_hashes = vec![];
+                    let mut commit_dates = vec![];
                     let mut commit_loc = vec![];
 
                     for commit in &process.commits {
@@ -621,6 +631,8 @@ fn main() -> Result<ExitCode> {
                     frequency: _,
                     pattern,
                 } => {
+                    let mut commit_hashes = vec![];
+                    let mut commit_dates = vec![];
                     let mut commit_pattern_occurences: Vec<u32> = vec![];
 
                     for commit in &process.commits {
@@ -657,6 +669,50 @@ fn main() -> Result<ExitCode> {
                     ])?
                     .sort(
                         ["commit_date"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::TotalDiffByAuthorEmail => {
+                    let mut result = HashMap::new();
+
+                    for commit in &process.commits {
+                        let diff_stat_value = process
+                            .storage
+                            .get(&(CollectorConfig::TotalDiffStat, commit.id.clone()));
+
+                        let Some(diff_stat_value) = diff_stat_value else {
+                            continue;
+                        };
+
+                        let CollectorValue::TotalDiffStat(diff_stat_value) =
+                            diff_stat_value.clone()
+                        else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        if let Some(email) = &commit.author.email {
+                            let entry = result.entry(email.clone()).or_insert((0, 0));
+                            entry.0 += diff_stat_value.insertions;
+                            entry.1 += diff_stat_value.deletions;
+                        }
+                    }
+
+                    drop(process);
+
+                    let result = result.iter().collect::<Vec<_>>();
+                    let emails: Vec<String> =
+                        result.iter().map(|(email, _)| (**email).clone()).collect();
+                    let added: Vec<u32> = result.iter().map(|(_, (value, _))| *value).collect();
+                    let removed: Vec<u32> = result.iter().map(|(_, (_, value))| *value).collect();
+
+                    DataFrame::new(vec![
+                        Column::new("emails".into(), emails),
+                        Column::new("added".into(), added),
+                        Column::new("removed".into(), removed),
+                    ])?
+                    .sort(
+                        ["added"],
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
