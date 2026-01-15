@@ -14,6 +14,7 @@ use total_loc::{TotalLoc, TotalLocError};
 use total_pattern_occurences::{TotalPatternOccurences, TotalPatternOccurencesError};
 
 use crate::{
+    collectors::diff_stat::{DiffStat, DiffStatError},
     config::CollectorConfig,
     git::{CommitHash, WorktreeHandle},
     graph::CollectionExecutionGraph,
@@ -21,6 +22,7 @@ use crate::{
 
 mod changed_files;
 mod changed_files_loc;
+mod diff_stat;
 mod file_list;
 mod loc;
 mod pattern_occurences;
@@ -55,6 +57,7 @@ pub enum CollectorValue {
     FileList(file_list::FileListValue),
     TotalFileCount(total_file_count::TotalFileCountValue),
     ChangedFilesLoc(changed_files_loc::ChangedFilesLocValue),
+    DiffStat(diff_stat::DiffStatValue),
 }
 
 macro_rules! impl_from {
@@ -154,6 +157,9 @@ pub enum BaseCollectorError {
 
     #[error("{0}")]
     TotalDiffStat(total_diff_stat::TotalDiffStatError),
+
+    #[error("{0}")]
+    DiffStat(diff_stat::DiffStatError),
 }
 
 impl From<ChangedFilesLocError> for BaseCollectorError {
@@ -198,6 +204,12 @@ impl From<TotalDiffStatError> for BaseCollectorError {
     }
 }
 
+impl From<DiffStatError> for BaseCollectorError {
+    fn from(value: DiffStatError) -> Self {
+        BaseCollectorError::DiffStat(value)
+    }
+}
+
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum DerivedCollectorError {
@@ -237,6 +249,7 @@ pub(crate) enum BaseCollectorObj {
     PatternOccurences(PatternOccurences),
     TotalCargoDependencies(TotalCargoDependencies),
     TotalDiffStat(TotalDiffStat),
+    DiffStat(DiffStat),
 }
 
 impl BaseCollector for BaseCollectorObj {
@@ -269,6 +282,9 @@ impl BaseCollector for BaseCollectorObj {
                 .collect(storage, repo, graph, current_node_idx)
                 .map_err(|err| err.into()),
             BaseCollectorObj::TotalDiffStat(collector) => collector
+                .collect(storage, repo, graph, current_node_idx)
+                .map_err(|err| err.into()),
+            BaseCollectorObj::DiffStat(collector) => collector
                 .collect(storage, repo, graph, current_node_idx)
                 .map_err(|err| err.into()),
         }
@@ -375,6 +391,9 @@ impl From<&CollectorConfig> for Collector {
             CollectorConfig::ChangedFilesLoc => Collector::Base(BaseCollectorObj::ChangedFilesLoc(
                 changed_files_loc::ChangedFilesLoc {},
             )),
+            CollectorConfig::DiffStat => {
+                Collector::Base(BaseCollectorObj::DiffStat(diff_stat::DiffStat))
+            }
         }
     }
 }

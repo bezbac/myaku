@@ -30,6 +30,8 @@ pub enum CollectorConfig {
     TotalFileCount,
     #[serde(rename = "changed-files-loc")]
     ChangedFilesLoc,
+    #[serde(rename = "diff-stat")]
+    DiffStat,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Debug)]

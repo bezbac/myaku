@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env::temp_dir,
     fmt::Formatter,
     io::{BufRead, BufReader},
@@ -425,6 +425,45 @@ impl WorktreeHandle<'_> {
         let diff = get_current_diff_to_parent(&git2_repo)?;
         let stats = diff.stats()?;
         Ok((stats.files_changed(), stats.insertions(), stats.deletions()))
+    }
+
+    pub fn get_current_per_file_diff_stat(
+        &self,
+    ) -> Result<HashMap<PathBuf, (usize, usize)>, GitError> {
+        let git2_repo: Repository = self.try_into()?;
+        let diff = get_current_diff_to_parent(&git2_repo)?;
+
+        let mut result = HashMap::new();
+        let mut file_callback = |_delta: git2::DiffDelta, _progress: f32| -> bool { true };
+        let mut line_callback =
+            |delta: git2::DiffDelta, _hunk: Option<git2::DiffHunk>, line: git2::DiffLine| -> bool {
+                let file_path = if let Some(path) = delta.new_file().path() {
+                    path.to_path_buf()
+                } else if let Some(path) = delta.old_file().path() {
+                    path.to_path_buf()
+                } else {
+                    // Skip if no path available
+                    return true;
+                };
+
+                let entry = result.entry(file_path).or_insert((0, 0));
+
+                match line.origin_value() {
+                    git2::DiffLineType::Addition | git2::DiffLineType::AddEOFNL => entry.0 += 1,
+                    git2::DiffLineType::Deletion | git2::DiffLineType::DeleteEOFNL => entry.1 += 1,
+                    git2::DiffLineType::ContextEOFNL
+                    | git2::DiffLineType::FileHeader
+                    | git2::DiffLineType::HunkHeader
+                    | git2::DiffLineType::Binary
+                    | git2::DiffLineType::Context => {}
+                }
+
+                true
+            };
+
+        diff.foreach(&mut file_callback, None, None, Some(&mut line_callback))?;
+
+        Ok(result)
     }
 
     pub fn get_current_changed_file_paths(&self) -> Result<HashSet<String>, GitError> {

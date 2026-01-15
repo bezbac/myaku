@@ -92,6 +92,7 @@ enum Query {
         pattern: String,
     },
     TotalDiffByAuthorEmail,
+    TotalDiffByAuthorEmailAndFileExtension,
 }
 
 #[derive(Subcommand)]
@@ -337,6 +338,15 @@ fn main() -> Result<ExitCode> {
                         "total-diff-stat-over-time".to_string(),
                         MetricConfig {
                             collector: myaku::CollectorConfig::TotalDiffStat,
+                            frequency: myaku::Frequency::PerCommit,
+                        },
+                    );
+                }
+                Query::TotalDiffByAuthorEmailAndFileExtension => {
+                    metrics.insert(
+                        "changed-files-loc".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::DiffStat,
                             frequency: myaku::Frequency::PerCommit,
                         },
                     );
@@ -736,6 +746,66 @@ fn main() -> Result<ExitCode> {
 
                     DataFrame::new(vec![
                         Column::new("emails".into(), emails),
+                        Column::new("added".into(), added),
+                        Column::new("removed".into(), removed),
+                    ])?
+                    .sort(
+                        ["added"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::TotalDiffByAuthorEmailAndFileExtension => {
+                    let mut result = HashMap::new();
+
+                    for commit in &process.commits {
+                        let changed_files_diff_stat = process
+                            .storage
+                            .get(&(CollectorConfig::DiffStat, commit.id.clone()));
+
+                        let Some(changed_files_diff_stat) = changed_files_diff_stat else {
+                            continue;
+                        };
+
+                        let CollectorValue::DiffStat(changed_files_diff_stat) =
+                            changed_files_diff_stat.clone()
+                        else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        if let Some(email) = &commit.author.email {
+                            for (changed_file_path, changed_file_diff_stat) in
+                                changed_files_diff_stat.files
+                            {
+                                let file_extension = changed_file_path
+                                    .extension()
+                                    .and_then(|v| v.to_str().map(|v| v.to_string()));
+                                let entry = result
+                                    .entry((email.clone(), file_extension))
+                                    .or_insert((0, 0));
+                                entry.0 += changed_file_diff_stat.insertions;
+                                entry.1 += changed_file_diff_stat.deletions;
+                            }
+                        }
+                    }
+
+                    drop(process);
+
+                    let mut emails: Vec<String> = vec![];
+                    let mut file_extensions: Vec<Option<String>> = vec![];
+                    let mut added: Vec<u64> = vec![];
+                    let mut removed: Vec<u64> = vec![];
+
+                    for ((email, file_extension), (fadded, fremoved)) in result {
+                        emails.push(email);
+                        file_extensions.push(file_extension);
+                        added.push(fadded as u64);
+                        removed.push(fremoved as u64);
+                    }
+
+                    DataFrame::new(vec![
+                        Column::new("email".into(), emails),
+                        Column::new("file_extension".into(), file_extensions),
                         Column::new("added".into(), added),
                         Column::new("removed".into(), removed),
                     ])?
