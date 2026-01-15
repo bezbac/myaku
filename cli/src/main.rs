@@ -14,7 +14,7 @@ use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use myaku::{
     Cache, CollectorConfig, CollectorValue, FileCache, GitRepository, Initial, MetricConfig,
-    RepositoryHandle,
+    RepositoryHandle, WorktreeCreationCallbackState,
 };
 use polars::prelude::*;
 use serde::Serialize;
@@ -457,10 +457,40 @@ fn main() -> Result<ExitCode> {
             info!("Collected tag information")?;
 
             info!("Building execution graph")?;
-
             let process = process.prepare_for_collection(true)?;
             term.clear_last_lines(1)?;
             info!("Built execution graph")?;
+
+            info!("Creating worktrees")?;
+            let pb =
+                ProgressBar::with_draw_target(Some(1), ProgressDrawTarget::term(term.clone(), 20));
+            let style =
+                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+                    .expect("Failed to create progress style")
+                    .progress_chars("#>-");
+            pb.set_style(style);
+            pb.enable_steady_tick(Duration::from_millis(100));
+            let (tx, rx) = std::sync::mpsc::channel::<myaku::WorktreeCreationCallbackState>();
+            let worktree_dir = PathBuf::from(format!(".myaku/worktree/{repository_name}"));
+            let reader = std::thread::spawn(move || {
+                while let Result::Ok(WorktreeCreationCallbackState {
+                    desired_worktree_count,
+                    ready_worktree_count,
+                }) = rx.recv()
+                {
+                    pb.set_length(desired_worktree_count as u64);
+                    pb.set_position(ready_worktree_count as u64);
+                    pb.set_message(format!(
+                        "{ready_worktree_count}/{desired_worktree_count} worktrees created",
+                    ));
+                }
+            });
+            let process = process.create_worktrees(Some(tx), worktree_dir)?;
+            reader
+                .join()
+                .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
+            term.clear_last_lines(1)?;
+            info!("Created worktrees")?;
 
             info!("Collecting data points")?;
             let (process, fresh_task_count, reused_task_count, metric_count, duration_in_secs) = {
@@ -475,7 +505,7 @@ fn main() -> Result<ExitCode> {
                 pb.set_style(style);
                 pb.enable_steady_tick(Duration::from_millis(100));
 
-                let (tx, rx) = std::sync::mpsc::channel::<myaku::ExecutionProgressCallbackState>();
+                let (tx, rx) = std::sync::mpsc::channel::<myaku::MetricCollectionCallbackState>();
 
                 let metric_count = Arc::new(Mutex::new(0_usize));
                 let fresh_task_count = Arc::new(Mutex::new(0_usize));
@@ -494,7 +524,7 @@ fn main() -> Result<ExitCode> {
 
                     while let Result::Ok(state) = rx.recv() {
                         match state {
-                            myaku::ExecutionProgressCallbackState::Initial {
+                            myaku::MetricCollectionCallbackState::Initial {
                                 task_count,
                                 metric_count: mcount,
                             } => {
@@ -504,7 +534,7 @@ fn main() -> Result<ExitCode> {
                                 drop(metric_count_lock);
                                 pb.set_length(task_count as u64);
                             }
-                            myaku::ExecutionProgressCallbackState::Reused {
+                            myaku::MetricCollectionCallbackState::Reused {
                                 collector_config,
                                 commit_hash,
                             } => {
@@ -515,7 +545,7 @@ fn main() -> Result<ExitCode> {
                                 *reused_task_count_lock += 1;
                                 drop(reused_task_count_lock);
                             }
-                            myaku::ExecutionProgressCallbackState::New {
+                            myaku::MetricCollectionCallbackState::New {
                                 collector_config: _,
                                 commit_hash: _,
                             } => {
@@ -525,7 +555,7 @@ fn main() -> Result<ExitCode> {
                                 *fresh_task_count_lock += 1;
                                 drop(fresh_task_count_lock);
                             }
-                            myaku::ExecutionProgressCallbackState::Finished => {}
+                            myaku::MetricCollectionCallbackState::Finished => {}
                         }
 
                         let reused_task_count_lock = reused_task_count
@@ -549,9 +579,7 @@ fn main() -> Result<ExitCode> {
                     }
                 });
 
-                let worktree_dir = PathBuf::from(format!(".myaku/worktree/{repository_name}"));
-
-                let process = process.collect_metrics(Some(tx), worktree_dir)?;
+                let process = process.collect_metrics(Some(tx))?;
 
                 reader
                     .join()

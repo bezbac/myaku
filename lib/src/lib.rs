@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use collectors::{BaseCollector, Collector, DerivedCollector};
 use dashmap::DashMap;
@@ -17,7 +17,7 @@ use ssh_key::PrivateKey;
 use thiserror::Error;
 use tracing::{debug, span, Level};
 
-use crate::git::clone_repository;
+use crate::git::{clone_repository, TempWorktreeHandle};
 use crate::graph::build_collection_execution_graph;
 
 mod cache;
@@ -62,7 +62,14 @@ pub enum CollectionProcessError {
     Git(#[from] git::GitError),
 
     #[error("{0}")]
-    Send(#[from] std::sync::mpsc::SendError<ExecutionProgressCallbackState>),
+    SendMetricCollectionCallbackState(
+        #[from] std::sync::mpsc::SendError<MetricCollectionCallbackState>,
+    ),
+
+    #[error("{0}")]
+    SendWorktreeCreationCallbackState(
+        #[from] std::sync::mpsc::SendError<WorktreeCreationCallbackState>,
+    ),
 }
 
 pub struct Initial {
@@ -131,11 +138,27 @@ pub struct IdleWithCommits {
     pub storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
 }
 
-pub struct ReadyForCollection {
+pub struct ReadyForWorktreeCreation {
     pub metrics: HashMap<String, MetricConfig>,
 
     repo: RepositoryHandle,
     collection_execution_graph: CollectionExecutionGraph,
+
+    cache: Option<Box<dyn Cache>>,
+
+    pub commits: Vec<CommitInfo>,
+    pub tags: Option<Vec<CommitTagInfo>>,
+    pub storage: DashMap<(CollectorConfig, CommitHash), CollectorValue>,
+
+    pub latest_commit: CommitHash,
+}
+
+pub struct ReadyForCollection {
+    pub metrics: HashMap<String, MetricConfig>,
+
+    collection_execution_graph: CollectionExecutionGraph,
+    worktree_names: Vec<String>,
+    repo: RepositoryHandle,
 
     cache: Option<Box<dyn Cache>>,
 
@@ -184,7 +207,13 @@ pub enum CollectionProcess {
 }
 
 #[derive(Debug)]
-pub enum ExecutionProgressCallbackState {
+pub struct WorktreeCreationCallbackState {
+    pub desired_worktree_count: usize,
+    pub ready_worktree_count: usize,
+}
+
+#[derive(Debug)]
+pub enum MetricCollectionCallbackState {
     Initial {
         metric_count: usize,
         task_count: usize,
@@ -358,7 +387,7 @@ impl IdleWithCommits {
     pub fn prepare_for_collection(
         self,
         force_latest_commit: bool,
-    ) -> Result<ReadyForCollection, CollectionProcessError> {
+    ) -> Result<ReadyForWorktreeCreation, CollectionProcessError> {
         let collection_execution_graph =
             build_collection_execution_graph(&self.metrics, &self.commits, force_latest_commit);
 
@@ -383,7 +412,7 @@ impl IdleWithCommits {
             .map(|c| c.id.clone())
             .ok_or(CollectionProcessError::NoCommits)?;
 
-        Ok(ReadyForCollection {
+        Ok(ReadyForWorktreeCreation {
             collection_execution_graph,
             latest_commit,
             metrics: self.metrics,
@@ -396,13 +425,13 @@ impl IdleWithCommits {
     }
 }
 
-impl ReadyForCollection {
+impl ReadyForWorktreeCreation {
     #[tracing::instrument(level = "trace", skip(self, channel))]
-    pub fn collect_metrics(
+    pub fn create_worktrees(
         self,
-        channel: Option<std::sync::mpsc::Sender<ExecutionProgressCallbackState>>,
+        channel: Option<std::sync::mpsc::Sender<WorktreeCreationCallbackState>>,
         worktree_path: PathBuf,
-    ) -> Result<PostCollection, CollectionProcessError> {
+    ) -> Result<ReadyForCollection, CollectionProcessError> {
         let alphabet: [char; 16] = [
             '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
         ];
@@ -410,17 +439,73 @@ impl ReadyForCollection {
         fs::create_dir_all(&worktree_path)?;
 
         let available_cpus = num_cpus::get();
+        let created_worktrees = Arc::new(RwLock::new(0));
 
-        let worktree_pool = Arc::new(Pool::new(available_cpus, || {
+        if let Some(channel) = &channel {
+            channel.send(WorktreeCreationCallbackState {
+                desired_worktree_count: available_cpus,
+                ready_worktree_count: 0,
+            })?;
+        }
+
+        let mut worktree_names = vec![];
+
+        for _ in 0..available_cpus {
             let id = nanoid!(10, &alphabet);
 
             let handle = self
                 .repo
-                .create_temp_worktree(&id, &worktree_path.join(&id))
+                .create_worktree(&id, &worktree_path.join(&id))
                 .expect("Could not create worktree");
 
-            handle
-        }));
+            let created_worktrees = created_worktrees.clone();
+            loop {
+                if let Ok(mut w) = created_worktrees.try_write() {
+                    *w += 1;
+
+                    if let Some(channel) = &channel {
+                        channel.send(WorktreeCreationCallbackState {
+                            desired_worktree_count: available_cpus,
+                            ready_worktree_count: *w,
+                        })?;
+                    }
+
+                    break;
+                }
+            }
+
+            worktree_names.push(handle.name);
+        }
+
+        Ok(ReadyForCollection {
+            worktree_names,
+            repo: self.repo,
+            metrics: self.metrics,
+            collection_execution_graph: self.collection_execution_graph,
+            commits: self.commits,
+            tags: self.tags,
+            storage: self.storage,
+            latest_commit: self.latest_commit,
+            cache: self.cache,
+        })
+    }
+}
+
+impl ReadyForCollection {
+    #[tracing::instrument(level = "trace", skip(self, channel))]
+    pub fn collect_metrics(
+        self,
+        channel: Option<std::sync::mpsc::Sender<MetricCollectionCallbackState>>,
+    ) -> Result<PostCollection, CollectionProcessError> {
+        let mut worktrees = vec![];
+
+        for name in self.worktree_names {
+            let worktree = self.repo.open_worktree(&name)?;
+            let worktree: TempWorktreeHandle = worktree.into();
+            worktrees.push(worktree);
+        }
+
+        let worktree_pool = Pool::from_vec(worktrees);
 
         // Grouped task by commit, in order of topologial sort
         let visitor = petgraph::visit::Topo::new(&self.collection_execution_graph.graph);
@@ -442,7 +527,7 @@ impl ReadyForCollection {
         let iter = node_indices.par_iter();
 
         if let Some(channel) = &channel {
-            channel.send(ExecutionProgressCallbackState::Initial {
+            channel.send(MetricCollectionCallbackState::Initial {
                 metric_count: self.metrics.len(),
                 task_count: self.collection_execution_graph.graph.node_count(),
             })?;
@@ -466,7 +551,7 @@ impl ReadyForCollection {
                     if is_in_storage && !disable_cache {
                         debug!("reusing value from storage");
                         if let Some(channel) = &channel {
-                            channel.send(ExecutionProgressCallbackState::Reused {
+                            channel.send(MetricCollectionCallbackState::Reused {
                                 collector_config: task.collector_config.clone(),
                                 commit_hash: task.commit_hash.clone(),
                             })?;
@@ -505,7 +590,7 @@ impl ReadyForCollection {
                         );
 
                         if let Some(channel) = &channel {
-                            channel.send(ExecutionProgressCallbackState::New {
+                            channel.send(MetricCollectionCallbackState::New {
                                 collector_config: task.collector_config.clone(),
                                 commit_hash: task.commit_hash.clone(),
                             })?;
@@ -520,7 +605,7 @@ impl ReadyForCollection {
         drop(worktree_pool);
 
         if let Some(channel) = &channel {
-            channel.send(ExecutionProgressCallbackState::Finished)?;
+            channel.send(MetricCollectionCallbackState::Finished)?;
         }
 
         Ok(PostCollection {

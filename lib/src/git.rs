@@ -100,6 +100,12 @@ pub struct TempWorktreeHandle<'r> {
     worktree: WorktreeHandle<'r>,
 }
 
+impl<'r> From<WorktreeHandle<'r>> for TempWorktreeHandle<'r> {
+    fn from(value: WorktreeHandle<'r>) -> Self {
+        Self { worktree: value }
+    }
+}
+
 impl Drop for TempWorktreeHandle<'_> {
     fn drop(&mut self) {
         let res = self
@@ -174,7 +180,7 @@ pub enum GitError {
     Git2Erorr(#[from] git2::Error),
 }
 
-impl RepositoryHandle {
+impl<'r> RepositoryHandle {
     pub fn open(path: &Path) -> Result<RepositoryHandle, GitError> {
         if path.join(".git").exists() {
             return Ok(RepositoryHandle {
@@ -183,6 +189,16 @@ impl RepositoryHandle {
         }
 
         Err(GitError::NoGitDirectory(path.to_path_buf()))
+    }
+
+    pub fn open_worktree(&'r self, name: &str) -> Result<WorktreeHandle<'r>, GitError> {
+        let git2_repo: Repository = self.try_into()?;
+        let worktree = git2_repo.find_worktree(name)?;
+        Ok(WorktreeHandle {
+            repo: self,
+            name: name.to_string(),
+            path: worktree.path().to_path_buf(),
+        })
     }
 
     pub fn fetch(&self) -> Result<(), GitError> {
