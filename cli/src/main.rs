@@ -412,7 +412,7 @@ fn main() -> Result<ExitCode> {
                         ProgressDrawTarget::term(term.clone(), 20),
                     );
                     let style = ProgressStyle::with_template(
-                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg} (est. {eta} remaining)",
                     )
                     .expect("Failed to create progress style")
                     .progress_chars("#>-");
@@ -483,7 +483,7 @@ fn main() -> Result<ExitCode> {
                         ProgressDrawTarget::term(term.clone(), 20),
                     );
                     let style = ProgressStyle::with_template(
-                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg} (est. {eta} remaining)",
                     )
                     .expect("Failed to create progress style")
                     .progress_chars("#>-");
@@ -525,7 +525,7 @@ fn main() -> Result<ExitCode> {
                             ProgressDrawTarget::term(term.clone(), 20),
                         );
                         let style = ProgressStyle::with_template(
-                            " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                            " {spinner} [{elapsed_precise}] [{bar:40}] {msg} (est. {eta} remaining)",
                         )
                         .expect("Failed to create progress style")
                         .progress_chars("#>-");
@@ -600,9 +600,12 @@ fn main() -> Result<ExitCode> {
                                 drop(fresh_task_count_lock);
 
                                 pb.inc(1);
+
+                                let total_data_point_count = pb.length().unwrap_or(0);
                                 pb.set_message(format!(
-                                    "{} collected ({} reused)",
+                                    "{}/{} collected ({} reused)",
                                     fresh_task_count + reused_task_count,
+                                    total_data_point_count,
                                     reused_task_count
                                 ));
                             }
@@ -635,6 +638,7 @@ fn main() -> Result<ExitCode> {
                         )
                     };
                     term.clear_last_lines(1)?;
+
                     info!(
                         "Collected {} data points for {} metrics in {:.2}s ({} reused)",
                         fresh_task_count + reused_task_count,
