@@ -471,162 +471,186 @@ fn main() -> Result<ExitCode> {
             term.clear_last_lines(1)?;
             info!("Built execution graph")?;
 
-            info!("Creating worktrees")?;
-            let pb =
-                ProgressBar::with_draw_target(Some(1), ProgressDrawTarget::term(term.clone(), 20));
-            let style =
-                ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+            let process = match process.try_fast_forward() {
+                std::result::Result::Ok(process) => {
+                    info!("Fast-forwarded from previous run")?;
+                    process
+                }
+                std::result::Result::Err(process) => {
+                    info!("Creating worktrees")?;
+                    let pb = ProgressBar::with_draw_target(
+                        Some(1),
+                        ProgressDrawTarget::term(term.clone(), 20),
+                    );
+                    let style = ProgressStyle::with_template(
+                        " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                    )
                     .expect("Failed to create progress style")
                     .progress_chars("#>-");
-            pb.set_style(style);
-            pb.enable_steady_tick(Duration::from_millis(100));
-            let (tx, rx) = std::sync::mpsc::channel::<myaku::WorktreeCreationCallbackState>();
-            let worktree_dir = PathBuf::from(format!(".myaku/worktree/{repository_name}"));
-            let reader = std::thread::spawn(move || {
-                while let Result::Ok(WorktreeCreationCallbackState {
-                    desired_worktree_count,
-                    ready_worktree_count,
-                }) = rx.recv()
-                {
-                    pb.set_length(desired_worktree_count as u64);
-                    pb.set_position(ready_worktree_count as u64);
-                    pb.set_message(format!(
-                        "{ready_worktree_count}/{desired_worktree_count} worktrees created",
-                    ));
-                }
-            });
-            let process = process.create_worktrees(Some(tx), worktree_dir)?;
-            reader
-                .join()
-                .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
-            term.clear_last_lines(1)?;
-            info!("Created worktrees")?;
+                    pb.set_style(style);
+                    pb.enable_steady_tick(Duration::from_millis(100));
+                    let (tx, rx) =
+                        std::sync::mpsc::channel::<myaku::WorktreeCreationCallbackState>();
+                    let worktree_dir = PathBuf::from(format!(".myaku/worktree/{repository_name}"));
+                    let reader = std::thread::spawn(move || {
+                        while let Result::Ok(WorktreeCreationCallbackState {
+                            desired_worktree_count,
+                            ready_worktree_count,
+                        }) = rx.recv()
+                        {
+                            pb.set_length(desired_worktree_count as u64);
+                            pb.set_position(ready_worktree_count as u64);
+                            pb.set_message(format!(
+                                "{ready_worktree_count}/{desired_worktree_count} worktrees created",
+                            ));
+                        }
+                    });
+                    let process = process.create_worktrees(Some(tx), worktree_dir)?;
+                    reader
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
+                    term.clear_last_lines(1)?;
+                    info!("Created worktrees")?;
 
-            info!("Collecting data points")?;
-            let (process, fresh_task_count, reused_task_count, metric_count, duration_in_secs) = {
-                let pb = ProgressBar::with_draw_target(
-                    Some(1),
-                    ProgressDrawTarget::term(term.clone(), 20),
-                );
-                let style =
-                    ProgressStyle::with_template(" {spinner} [{elapsed_precise}] [{bar:40}] {msg}")
+                    info!("Collecting data points")?;
+                    let (
+                        process,
+                        fresh_task_count,
+                        reused_task_count,
+                        metric_count,
+                        duration_in_secs,
+                    ) = {
+                        let pb = ProgressBar::with_draw_target(
+                            Some(1),
+                            ProgressDrawTarget::term(term.clone(), 20),
+                        );
+                        let style = ProgressStyle::with_template(
+                            " {spinner} [{elapsed_precise}] [{bar:40}] {msg}",
+                        )
                         .expect("Failed to create progress style")
                         .progress_chars("#>-");
-                pb.set_style(style);
-                pb.enable_steady_tick(Duration::from_millis(100));
+                        pb.set_style(style);
+                        pb.enable_steady_tick(Duration::from_millis(100));
 
-                let (tx, rx) = std::sync::mpsc::channel::<myaku::MetricCollectionCallbackState>();
+                        let (tx, rx) =
+                            std::sync::mpsc::channel::<myaku::MetricCollectionCallbackState>();
 
-                let metric_count = Arc::new(Mutex::new(0_usize));
-                let fresh_task_count = Arc::new(Mutex::new(0_usize));
-                let reused_task_count = Arc::new(Mutex::new(0_usize));
+                        let metric_count = Arc::new(Mutex::new(0_usize));
+                        let fresh_task_count = Arc::new(Mutex::new(0_usize));
+                        let reused_task_count = Arc::new(Mutex::new(0_usize));
 
-                let movable_pb = pb.clone();
-                let movable_metric_count = metric_count.clone();
-                let movable_fresh_task_count = fresh_task_count.clone();
-                let movable_reused_task_count = reused_task_count.clone();
+                        let movable_pb = pb.clone();
+                        let movable_metric_count = metric_count.clone();
+                        let movable_fresh_task_count = fresh_task_count.clone();
+                        let movable_reused_task_count = reused_task_count.clone();
 
-                let reader = std::thread::spawn(move || {
-                    let pb = movable_pb;
-                    let metric_count = movable_metric_count;
-                    let fresh_task_count = movable_fresh_task_count;
-                    let reused_task_count = movable_reused_task_count;
+                        let reader = std::thread::spawn(move || {
+                            let pb = movable_pb;
+                            let metric_count = movable_metric_count;
+                            let fresh_task_count = movable_fresh_task_count;
+                            let reused_task_count = movable_reused_task_count;
 
-                    while let Result::Ok(state) = rx.recv() {
-                        match state {
-                            myaku::MetricCollectionCallbackState::Initial {
-                                task_count,
-                                metric_count: mcount,
-                            } => {
-                                let mut metric_count_lock =
-                                    metric_count.lock().expect("Failed to lock metric count");
-                                *metric_count_lock = mcount;
-                                drop(metric_count_lock);
-                                pb.set_length(task_count as u64);
-                            }
-                            myaku::MetricCollectionCallbackState::Reused {
-                                collector_config,
-                                commit_hash,
-                            } => {
-                                debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", collector_config, commit_hash);
-                                let mut reused_task_count_lock = reused_task_count
+                            while let Result::Ok(state) = rx.recv() {
+                                match state {
+                                    myaku::MetricCollectionCallbackState::Initial {
+                                        task_count,
+                                        metric_count: mcount,
+                                    } => {
+                                        let mut metric_count_lock = metric_count
+                                            .lock()
+                                            .expect("Failed to lock metric count");
+                                        *metric_count_lock = mcount;
+                                        drop(metric_count_lock);
+                                        pb.set_length(task_count as u64);
+                                    }
+                                    myaku::MetricCollectionCallbackState::Reused {
+                                        collector_config,
+                                        commit_hash,
+                                    } => {
+                                        debug!("Found data from previous run for collector {:?} and commit {}, skipping collection", collector_config, commit_hash);
+                                        let mut reused_task_count_lock = reused_task_count
+                                            .lock()
+                                            .expect("Failed to lock reused task count");
+                                        *reused_task_count_lock += 1;
+                                        drop(reused_task_count_lock);
+                                    }
+                                    myaku::MetricCollectionCallbackState::New {
+                                        collector_config: _,
+                                        commit_hash: _,
+                                    } => {
+                                        let mut fresh_task_count_lock = fresh_task_count
+                                            .lock()
+                                            .expect("Failed to lock fresh task count");
+                                        *fresh_task_count_lock += 1;
+                                        drop(fresh_task_count_lock);
+                                    }
+                                    myaku::MetricCollectionCallbackState::Finished => {}
+                                }
+
+                                let reused_task_count_lock = reused_task_count
                                     .lock()
                                     .expect("Failed to lock reused task count");
-                                *reused_task_count_lock += 1;
+                                let reused_task_count = *reused_task_count_lock;
                                 drop(reused_task_count_lock);
-                            }
-                            myaku::MetricCollectionCallbackState::New {
-                                collector_config: _,
-                                commit_hash: _,
-                            } => {
-                                let mut fresh_task_count_lock = fresh_task_count
+
+                                let fresh_task_count_lock = fresh_task_count
                                     .lock()
                                     .expect("Failed to lock fresh task count");
-                                *fresh_task_count_lock += 1;
+                                let fresh_task_count = *fresh_task_count_lock;
                                 drop(fresh_task_count_lock);
-                            }
-                            myaku::MetricCollectionCallbackState::Finished => {}
-                        }
 
-                        let reused_task_count_lock = reused_task_count
+                                pb.inc(1);
+                                pb.set_message(format!(
+                                    "{} collected ({} reused)",
+                                    fresh_task_count + reused_task_count,
+                                    reused_task_count
+                                ));
+                            }
+                        });
+
+                        let process = process.collect_metrics(Some(tx))?;
+
+                        reader
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
+
+                        pb.finish_and_clear();
+                        let metric_count =
+                            *metric_count.lock().expect("Failed to lock metric count");
+                        let reused_task_count = *reused_task_count
                             .lock()
                             .expect("Failed to lock reused task count");
-                        let reused_task_count = *reused_task_count_lock;
-                        drop(reused_task_count_lock);
-
-                        let fresh_task_count_lock = fresh_task_count
+                        let fresh_task_count = *fresh_task_count
                             .lock()
                             .expect("Failed to lock fresh task count");
-                        let fresh_task_count = *fresh_task_count_lock;
-                        drop(fresh_task_count_lock);
 
-                        pb.inc(1);
-                        pb.set_message(format!(
-                            "{} collected ({} reused)",
-                            fresh_task_count + reused_task_count,
-                            reused_task_count
-                        ));
-                    }
-                });
+                        let duration_in_secs = pb.elapsed().as_secs_f32();
 
-                let process = process.collect_metrics(Some(tx))?;
+                        (
+                            process,
+                            fresh_task_count,
+                            reused_task_count,
+                            metric_count,
+                            duration_in_secs,
+                        )
+                    };
+                    term.clear_last_lines(1)?;
+                    info!(
+                        "Collected {} data points for {} metrics in {:.2}s ({} reused)",
+                        fresh_task_count + reused_task_count,
+                        metric_count,
+                        duration_in_secs,
+                        reused_task_count
+                    )?;
 
-                reader
-                    .join()
-                    .map_err(|_| anyhow::anyhow!("Cannot join reader"))?;
+                    info!("Writing data to cache")?;
+                    let process = process.write_to_cache()?;
+                    term.clear_last_lines(1)?;
+                    info!("Wrote data to cache")?;
 
-                pb.finish_and_clear();
-                let metric_count = *metric_count.lock().expect("Failed to lock metric count");
-                let reused_task_count = *reused_task_count
-                    .lock()
-                    .expect("Failed to lock reused task count");
-                let fresh_task_count = *fresh_task_count
-                    .lock()
-                    .expect("Failed to lock fresh task count");
-
-                let duration_in_secs = pb.elapsed().as_secs_f32();
-
-                (
-                    process,
-                    fresh_task_count,
-                    reused_task_count,
-                    metric_count,
-                    duration_in_secs,
-                )
+                    process
+                }
             };
-            term.clear_last_lines(1)?;
-            info!(
-                "Collected {} data points for {} metrics in {:.2}s ({} reused)",
-                fresh_task_count + reused_task_count,
-                metric_count,
-                duration_in_secs,
-                reused_task_count
-            )?;
-
-            info!("Writing data to cache")?;
-            let process = process.write_to_cache()?;
-            term.clear_last_lines(1)?;
-            info!("Wrote data to cache")?;
 
             let mut df = match query {
                 Query::TotalLocOverTime { frequency: _ } => {

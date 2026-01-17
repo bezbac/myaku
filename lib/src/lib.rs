@@ -426,6 +426,36 @@ impl IdleWithCommits {
 }
 
 impl ReadyForWorktreeCreation {
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn try_fast_forward(self) -> Result<PostCollection, ReadyForWorktreeCreation> {
+        let nodes_without_data_count = self
+            .collection_execution_graph
+            .graph
+            .node_indices()
+            .filter(|nx| {
+                let task = &self.collection_execution_graph.graph[*nx];
+
+                !self
+                    .storage
+                    .contains_key(&(task.collector_config.clone(), task.commit_hash.clone()))
+            })
+            .count();
+
+        if nodes_without_data_count == 0 {
+            return Ok(PostCollection {
+                metrics: self.metrics,
+                collection_execution_graph: self.collection_execution_graph,
+                commits: self.commits,
+                tags: self.tags,
+                storage: self.storage,
+                latest_commit: self.latest_commit,
+                cache: self.cache,
+            });
+        }
+
+        Err(self)
+    }
+
     #[tracing::instrument(level = "trace", skip(self, channel))]
     pub fn create_worktrees(
         self,
