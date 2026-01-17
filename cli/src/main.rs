@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -91,6 +91,7 @@ enum Query {
         #[arg(long)]
         pattern: String,
     },
+    TotalContributorCountOverTime,
     TotalDiffByAuthorEmail,
     TotalDiffByAuthorEmailAndFileExtension,
 }
@@ -351,6 +352,7 @@ fn main() -> Result<ExitCode> {
                         },
                     );
                 }
+                Query::TotalContributorCountOverTime => {}
             }
 
             let process = Initial {
@@ -839,6 +841,33 @@ fn main() -> Result<ExitCode> {
                     ])?
                     .sort(
                         ["added"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::TotalContributorCountOverTime => {
+                    let mut commit_hashes = vec![];
+                    let mut commit_dates = vec![];
+                    let mut contributor_counts: Vec<u64> = vec![];
+                    let mut emails: HashSet<String> = HashSet::new();
+
+                    for commit in &process.commits {
+                        commit_hashes.push(commit.id.0.clone());
+                        commit_dates.push(commit.time.timestamp());
+                        if let Some(email) = &commit.author.email {
+                            emails.insert(email.clone());
+                        }
+                        contributor_counts.push(emails.len() as u64);
+                    }
+
+                    drop(process);
+
+                    DataFrame::new(vec![
+                        Column::new("commit_hash".into(), commit_hashes),
+                        Column::new("commit_date".into(), commit_dates),
+                        Column::new("count".into(), contributor_counts),
+                    ])?
+                    .sort(
+                        ["commit_date"],
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
