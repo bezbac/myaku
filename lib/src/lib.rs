@@ -235,10 +235,6 @@ impl Initial {
         self,
         ignore_mismatched_repo_url: bool,
     ) -> Result<CollectionProcess, CollectionProcessError> {
-        if self.metrics.is_empty() {
-            return Err(CollectionProcessError::NoMetrics);
-        }
-
         let reference_dir = &self.repository_path;
 
         fs::create_dir_all(reference_dir)?;
@@ -462,6 +458,10 @@ impl ReadyForWorktreeCreation {
         channel: Option<std::sync::mpsc::Sender<WorktreeCreationCallbackState>>,
         worktree_path: PathBuf,
     ) -> Result<ReadyForCollection, CollectionProcessError> {
+        if self.metrics.is_empty() {
+            return Err(CollectionProcessError::NoMetrics);
+        }
+
         let alphabet: [char; 16] = [
             '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'a', 'b', 'c', 'd', 'e', 'f',
         ];
@@ -527,6 +527,10 @@ impl ReadyForCollection {
         self,
         channel: Option<std::sync::mpsc::Sender<MetricCollectionCallbackState>>,
     ) -> Result<PostCollection, CollectionProcessError> {
+        if self.metrics.is_empty() {
+            return Err(CollectionProcessError::NoMetrics);
+        }
+
         let mut worktrees = vec![];
 
         for name in self.worktree_names {
