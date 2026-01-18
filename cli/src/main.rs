@@ -94,6 +94,7 @@ enum Query {
     TotalContributorCountOverTime,
     TotalDiffByAuthorEmail,
     TotalDiffByAuthorEmailAndFileExtension,
+    TotalLocByLanguage,
 }
 
 #[derive(Subcommand)]
@@ -353,6 +354,15 @@ fn main() -> Result<ExitCode> {
                     );
                 }
                 Query::TotalContributorCountOverTime => {}
+                Query::TotalLocByLanguage => {
+                    metrics.insert(
+                        "total-loc-by-language".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::Loc,
+                            frequency: myaku::Frequency::PerCommit,
+                        },
+                    );
+                }
             }
 
             let process = Initial {
@@ -868,6 +878,46 @@ fn main() -> Result<ExitCode> {
                     ])?
                     .sort(
                         ["commit_date"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::TotalLocByLanguage => {
+                    let (language, loc) = {
+                        let loc_by_language_value = process
+                            .storage
+                            .get(&(CollectorConfig::Loc, process.latest_commit.clone()));
+
+                        let Some(loc_by_language_value) = loc_by_language_value else {
+                            error!("No LOC data found for commit {}", process.latest_commit.0)?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        let CollectorValue::Loc(loc_by_language_value) =
+                            loc_by_language_value.clone()
+                        else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        let mut language = vec![];
+                        let mut loc = vec![];
+
+                        for (lang_value, loc_value) in &loc_by_language_value.loc_by_language {
+                            language.push(lang_value.to_string());
+                            loc.push(*loc_value as u64);
+                        }
+
+                        (language, loc)
+                    };
+
+                    drop(process);
+
+                    DataFrame::new(vec![
+                        Column::new("language".into(), language),
+                        Column::new("loc".into(), loc),
+                    ])?
+                    .sort(
+                        ["loc"],
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
