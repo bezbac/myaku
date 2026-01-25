@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::{io::Write, time::Duration};
 
 use anyhow::{Ok, Result};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -95,6 +96,79 @@ enum Query {
     TotalDiffByAuthorEmail,
     TotalDiffByAuthorEmailAndFileExtension,
     TotalLocByLanguage,
+    CommitsOverTime {
+        #[arg(long, value_enum)]
+        period: TimePeriod,
+    },
+}
+
+#[derive(Clone, Debug, clap::ValueEnum, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum TimePeriod {
+    Year,
+    Month,
+    Week,
+    Day,
+    Hour,
+}
+
+fn format_datetime_as_period(date: &DateTime<Utc>, period: &TimePeriod) -> String {
+    match period {
+        TimePeriod::Year => date.format("%Y-01").to_string(),
+        TimePeriod::Month => date.format("%Y-%m").to_string(),
+        TimePeriod::Week => date.format("%Y-W%V").to_string(),
+        TimePeriod::Day => date.format("%Y-%m-%d").to_string(),
+        TimePeriod::Hour => date.format("%Y-%m-%d-%H").to_string(),
+    }
+}
+
+fn increment_period(date: &DateTime<Utc>, period: &TimePeriod) -> DateTime<Utc> {
+    match period {
+        TimePeriod::Year => Utc
+            .with_ymd_and_hms(date.year() + 1, 1, 1, 0, 0, 0)
+            .unwrap(),
+        TimePeriod::Month => {
+            if date.month() + 1 > 12 {
+                Utc.with_ymd_and_hms(date.year() + 1, 1, 1, 0, 0, 0)
+                    .unwrap()
+            } else {
+                Utc.with_ymd_and_hms(date.year(), date.month() + 1, 1, 0, 0, 0)
+                    .unwrap()
+            }
+        }
+        TimePeriod::Week => *date + std::time::Duration::from_secs(60 * 60 * 24 * 7),
+        TimePeriod::Day => *date + std::time::Duration::from_secs(60 * 60 * 24),
+        TimePeriod::Hour => *date + std::time::Duration::from_secs(60 * 60),
+    }
+}
+
+fn start_of_period(date: &DateTime<Utc>, period: &TimePeriod) -> DateTime<Utc> {
+    match period {
+        TimePeriod::Year => Utc.with_ymd_and_hms(date.year(), 1, 1, 0, 0, 0).unwrap(),
+        TimePeriod::Month => Utc
+            .with_ymd_and_hms(date.year(), date.month(), 1, 0, 0, 0)
+            .unwrap(),
+        TimePeriod::Week => {
+            let days_since_monday = date.weekday().num_days_from_monday();
+            let start_of_week =
+                *date - std::time::Duration::from_hours(24 * u64::from(days_since_monday));
+            Utc.with_ymd_and_hms(
+                start_of_week.year(),
+                start_of_week.month(),
+                start_of_week.day(),
+                0,
+                0,
+                0,
+            )
+            .unwrap()
+        }
+        TimePeriod::Day => Utc
+            .with_ymd_and_hms(date.year(), date.month(), date.day(), 0, 0, 0)
+            .unwrap(),
+        TimePeriod::Hour => Utc
+            .with_ymd_and_hms(date.year(), date.month(), date.day(), date.hour(), 0, 0)
+            .unwrap(),
+    }
 }
 
 #[derive(Subcommand)]
@@ -353,7 +427,6 @@ fn main() -> Result<ExitCode> {
                         },
                     );
                 }
-                Query::TotalContributorCountOverTime => {}
                 Query::TotalLocByLanguage => {
                     metrics.insert(
                         "total-loc-by-language".to_string(),
@@ -362,6 +435,9 @@ fn main() -> Result<ExitCode> {
                             frequency: myaku::Frequency::PerCommit,
                         },
                     );
+                }
+                Query::TotalContributorCountOverTime | Query::CommitsOverTime { period: _ } => {
+                    // No collectors needed - commit data is already available
                 }
             }
 
@@ -921,6 +997,45 @@ fn main() -> Result<ExitCode> {
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
+                Query::CommitsOverTime { period } => {
+                    let mut commits = process.commits.clone();
+
+                    drop(process);
+
+                    commits.sort_by(|a, b| a.time.cmp(&b.time));
+
+                    let first_commit = &commits[0];
+                    let last_commit = &commits[commits.len() - 1];
+
+                    let start_date = start_of_period(&first_commit.time, period);
+                    let end_date = start_of_period(&last_commit.time, period);
+
+                    let mut period_to_commit_count: HashMap<String, u32> = HashMap::new();
+
+                    for commit in &commits {
+                        let key = format_datetime_as_period(&commit.time, period);
+                        *period_to_commit_count.entry(key).or_insert(0) += 1;
+                    }
+
+                    let mut all_periods = vec![];
+                    let mut all_commit_counts = vec![];
+
+                    let mut current_period_date = start_date;
+                    while current_period_date <= end_date {
+                        let key = format_datetime_as_period(&current_period_date, period);
+                        let count = period_to_commit_count.get(&key).copied().unwrap_or(0);
+
+                        all_periods.push(key);
+                        all_commit_counts.push(count);
+
+                        current_period_date = increment_period(&current_period_date, period);
+                    }
+
+                    DataFrame::new(vec![
+                        Column::new("period".into(), all_periods),
+                        Column::new("commits".into(), all_commit_counts),
+                    ])?
+                }
             };
 
             if let Some(output_file) = output_file {
@@ -968,6 +1083,7 @@ fn main() -> Result<ExitCode> {
                 }
             }
         }
+
         None => {}
     }
 
