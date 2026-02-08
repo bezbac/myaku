@@ -96,6 +96,7 @@ enum Query {
     TotalDiffByAuthorEmail,
     TotalDiffByAuthorEmailAndFileExtension,
     TotalLocByLanguage,
+    AverageDiffByAuthorEmail,
     CommitsOverTime {
         #[arg(long, value_enum)]
         period: TimePeriod,
@@ -246,6 +247,21 @@ impl Write for EmptyTermTarget {
 fn get_repository_path(repository_name: &str) -> Result<PathBuf> {
     let result = PathBuf::from_str(&format!(".myaku/repositories/{repository_name}"))?;
     Ok(result)
+}
+
+/// Assumes input values are sorted
+fn calculate_median(values: &[u32]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mid = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        let a = f64::from(values[mid - 1]);
+        let b = f64::from(values[mid]);
+        Some(f64::midpoint(a, b))
+    } else {
+        Some(f64::from(values[mid]))
+    }
 }
 
 #[tracing::instrument]
@@ -409,20 +425,20 @@ fn main() -> Result<ExitCode> {
                         },
                     );
                 }
-                Query::TotalDiffByAuthorEmail => {
-                    metrics.insert(
-                        "total-diff-stat-over-time".to_string(),
-                        MetricConfig {
-                            collector: myaku::CollectorConfig::TotalDiffStat,
-                            frequency: myaku::Frequency::PerCommit,
-                        },
-                    );
-                }
                 Query::TotalDiffByAuthorEmailAndFileExtension => {
                     metrics.insert(
                         "changed-files-loc".to_string(),
                         MetricConfig {
                             collector: myaku::CollectorConfig::DiffStat,
+                            frequency: myaku::Frequency::PerCommit,
+                        },
+                    );
+                }
+                Query::TotalDiffByAuthorEmail | Query::AverageDiffByAuthorEmail => {
+                    metrics.insert(
+                        "total-diff-stat-over-time".to_string(),
+                        MetricConfig {
+                            collector: myaku::CollectorConfig::TotalDiffStat,
                             frequency: myaku::Frequency::PerCommit,
                         },
                     );
@@ -927,6 +943,82 @@ fn main() -> Result<ExitCode> {
                     ])?
                     .sort(
                         ["added"],
+                        SortMultipleOptions::new().with_order_descending(true),
+                    )?
+                }
+                Query::AverageDiffByAuthorEmail => {
+                    let mut per_email_values: HashMap<String, Vec<(u32, u32)>> = HashMap::new();
+
+                    for commit in &process.commits {
+                        let diff_stat_value = process
+                            .storage
+                            .get(&(CollectorConfig::TotalDiffStat, commit.id.clone()));
+
+                        let Some(diff_stat_value) = diff_stat_value else {
+                            continue;
+                        };
+
+                        let CollectorValue::TotalDiffStat(diff_stat_value) =
+                            diff_stat_value.clone()
+                        else {
+                            error!("Unexpected collector value")?;
+                            return Ok(ExitCode::from(1));
+                        };
+
+                        if let Some(email) = &commit.author.email {
+                            let diffs = per_email_values.entry(email.clone()).or_default();
+                            diffs.push((diff_stat_value.insertions, diff_stat_value.deletions));
+                        }
+                    }
+
+                    drop(process);
+
+                    let emails: Vec<String> = per_email_values.keys().cloned().collect();
+                    let mut commit_counts: Vec<u32> = vec![];
+                    let mut mean_added: Vec<f64> = Vec::new();
+                    let mut median_added: Vec<f64> = Vec::new();
+                    let mut mean_removed: Vec<f64> = Vec::new();
+                    let mut median_removed: Vec<f64> = Vec::new();
+
+                    for email in &emails {
+                        if let Some(values) = per_email_values.get(email) {
+                            #[allow(clippy::cast_possible_truncation)]
+                            commit_counts.push(values.len() as u32);
+
+                            let mut added_values: Vec<u32> =
+                                values.iter().map(|(a, _)| *a).collect();
+                            let mut removed_values: Vec<u32> =
+                                values.iter().map(|(_, b)| *b).collect();
+
+                            added_values.sort_unstable();
+                            removed_values.sort_unstable();
+
+                            #[allow(clippy::cast_precision_loss)]
+                            let mean_added_value =
+                                f64::from(added_values.iter().sum::<u32>()) / values.len() as f64;
+
+                            #[allow(clippy::cast_precision_loss)]
+                            let mean_removed_value =
+                                f64::from(removed_values.iter().sum::<u32>()) / values.len() as f64;
+
+                            mean_added.push(mean_added_value);
+                            median_added.push(calculate_median(&added_values).unwrap_or(0.0));
+
+                            mean_removed.push(mean_removed_value);
+                            median_removed.push(calculate_median(&removed_values).unwrap_or(0.0));
+                        }
+                    }
+
+                    DataFrame::new(vec![
+                        Column::new("email".into(), emails),
+                        Column::new("commit_count".into(), commit_counts),
+                        Column::new("mean_added".into(), mean_added),
+                        Column::new("median_added".into(), median_added),
+                        Column::new("mean_removed".into(), mean_removed),
+                        Column::new("median_removed".into(), median_removed),
+                    ])?
+                    .sort(
+                        ["commit_count"],
                         SortMultipleOptions::new().with_order_descending(true),
                     )?
                 }
