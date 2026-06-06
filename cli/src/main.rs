@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use console::{colors_enabled, style, Term};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use myaku::{
-    Cache, CollectorConfig, CollectorValue, FileCache, GitRepository, Initial, MetricConfig,
+    Cache, CollectorConfig, CollectorValue, FjallCache, GitRepository, Initial, MetricConfig,
     RepositoryHandle, WorktreeCreationCallbackState,
 };
 use polars::prelude::*;
@@ -397,7 +397,7 @@ fn main() -> Result<ExitCode> {
                 let cache_directory = cache_path
                     .clone()
                     .unwrap_or(PathBuf::from(format!(".myaku/cache/{repository_name}")));
-                let cache = FileCache::new(&cache_directory);
+                let cache = FjallCache::new(&cache_directory.join("db.fjall"))?;
                 Some(Box::new(cache))
             };
 

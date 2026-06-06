@@ -19,9 +19,12 @@ pub enum CacheError {
 
     #[error("Serde JSON error: {0}")]
     SerdeJson(#[from] serde_json::Error),
+
+    #[error("Fjall error: {0}")]
+    Fjall(#[from] fjall::Error),
 }
 
-pub trait Cache: core::fmt::Debug {
+pub trait Cache {
     fn lookup(
         &self,
         collector_config: &CollectorConfig,
@@ -34,6 +37,13 @@ pub trait Cache: core::fmt::Debug {
         commit_hash: &CommitHash,
         value: &CollectorValue,
     ) -> Result<(), CacheError>;
+}
+
+fn get_config_hash(collector_config: &CollectorConfig) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(serde_json::to_string(collector_config).unwrap());
+    let bytes = hasher.finalize();
+    format!("{bytes:x}")
 }
 
 #[derive(Debug)]
@@ -56,12 +66,7 @@ impl FileCache {
         collector_config: &CollectorConfig,
         commit: &CommitHash,
     ) -> Result<PathBuf, CacheError> {
-        let config_hash = {
-            let mut hasher = Sha1::new();
-            hasher.update(serde_json::to_string(collector_config)?);
-            let bytes = hasher.finalize();
-            format!("{bytes:x}")
-        };
+        let config_hash = get_config_hash(collector_config);
 
         let mut path = self
             .base
@@ -117,5 +122,67 @@ impl Cache for FileCache {
         file.write_all(contents.as_bytes())?;
 
         Ok(())
+    }
+}
+
+pub struct FjallCache {
+    db: fjall::Database,
+}
+
+impl FjallCache {
+    pub fn new(path: &Path) -> Result<Self, CacheError> {
+        let db = fjall::Database::builder(path).open()?;
+        Ok(Self { db })
+    }
+
+    pub fn get(&self, key: &str) -> Result<Option<fjall::Slice>, CacheError> {
+        let items = self
+            .db
+            .keyspace("items", fjall::KeyspaceCreateOptions::default)?;
+        let value = items.get(key)?;
+        Ok(value)
+    }
+
+    pub fn set(&self, key: &str, value: &[u8]) -> Result<(), CacheError> {
+        let items = self
+            .db
+            .keyspace("items", fjall::KeyspaceCreateOptions::default)?;
+        items.insert(key, value)?;
+        Ok(())
+    }
+}
+
+impl Cache for FjallCache {
+    fn lookup(
+        &self,
+        collector_config: &CollectorConfig,
+        commit_hash: &CommitHash,
+    ) -> Result<Option<CollectorValue>, CacheError> {
+        let config_hash = get_config_hash(collector_config);
+        let key = format!("{}:{}", config_hash, commit_hash.0);
+
+        if let Some(slice) = self.get(&key)? {
+            let contents = String::from_utf8(slice.to_vec())?;
+
+            let value: CollectorValue = serde_json::from_str(&contents)?;
+
+            Ok(Some(value))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn store(
+        &self,
+        collector_config: &CollectorConfig,
+        commit_hash: &CommitHash,
+        value: &CollectorValue,
+    ) -> Result<(), CacheError> {
+        let config_hash = get_config_hash(collector_config);
+        let key = format!("{}:{}", config_hash, commit_hash.0);
+
+        let contents = serde_json::to_string(value)?;
+
+        self.set(&key, contents.as_bytes())
     }
 }

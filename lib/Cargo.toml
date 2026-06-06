@@ -8,6 +8,7 @@ cargo-lock = "9.0.0"
 chrono = { version = "0.4.38", features = ["serde"] }
 dashmap = "5.5.3"
 execute = "0.2.13"
+fjall = "3.1.4"
 git2 = "0.18.1"
 globset = { version = "0.4", features = ["serde1"] }
 grep = "0.3.1"

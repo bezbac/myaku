@@ -26,7 +26,7 @@ mod config;
 mod git;
 mod graph;
 
-pub use cache::{Cache, FileCache};
+pub use cache::{Cache, FileCache, FjallCache};
 pub use collectors::{
     ChangedFilesLocValue, ChangedFilesValue, CollectorValue, FileListValue, LocValue,
     PatternOccurencesValue, TotalCargoDependenciesValue, TotalDiffStatValue, TotalFileCountValue,
